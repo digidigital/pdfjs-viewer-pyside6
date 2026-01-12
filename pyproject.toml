@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdfjs-viewer-pyside6"
+version = "1.0.0"
+description = "PDF.js-based PDF viewer widget for PySide6 with annotation support"
+readme = "README.md"
+authors = [
+    {name = "Björn Seipel", email = "support@digidigital.de"}
+]
+license = {text = "LGPL-3.0-or-later"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Widget Sets",
+    "Operating System :: OS Independent",
+]
+keywords = ["pdf", "viewer", "qt", "pyside6", "pdfjs", "annotation", "widget", "dark-mode", "light-mode"]
+requires-python = ">=3.8"
+dependencies = [
+    "PySide6>=6.10.0,!=6.10.1",
+    "PySide6-Addons>=6.10.0,!=6.10.1",
+    "PySide6-Essentials>=6.10.0,!=6.10.1",
+]
+
+[project.optional-dependencies]
+qt-print = [
+    "pypdfium2>=4.0.0",
+    "Pillow>=9.0.0",
+    "pikepdf>=8.0.0",
+]
+dev = [
+    "black>=23.0",
+    "mypy>=1.0",
+    "pyinstaller>=5.0",
+]
+
+[project.urls]
+Homepage = "https://pdfjs-viewer.digidigital.de"
+Repository = "https://github.com/digidigital/pdfjs-viewer-pyside6"
+"Bug Tracker" = "https://github.com/digidigital/pdfjs-viewer-pyside6/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pdfjs_viewer = [
+    "pdfjs/**/*",
+    "templates/*.js",
+    "pyinstaller_hooks/*.py",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311']
