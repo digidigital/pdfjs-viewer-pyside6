@@ -1,7 +1,7 @@
 """Basic PDF viewer example.
 
 Demonstrates minimal setup for viewing a PDF file with unrestricted features,
-plus examples of customizing presets for features, security, and stability.
+plus examples of customizing presets for features and security.
 """
 
 import sys
@@ -20,10 +20,10 @@ def main():
     window.resize(1024, 768)
 
     # ===== EXAMPLE 1: Unrestricted preset (default) =====
-    # Create PDF viewer widget with unrestricted preset
-    config = ConfigPresets.unrestricted()
+    # Create PDF viewer widget with annotation preset
+    config = ConfigPresets.annotation()
     viewer = PDFViewerWidget(config=config)
-
+    
     # ===== EXAMPLE 2: Customize preset - Simple approach =====
     # Start with readonly preset but enable saving
     # viewer = PDFViewerWidget(
@@ -59,23 +59,19 @@ def main():
     #     }
     # )
 
-    # ===== EXAMPLE 5: Customize preset - Stability =====
-    # Configure stability for embedded/crash-prone systems
-    # viewer = PDFViewerWidget(
-    #     preset="simple",
-    #     customize={
-    #         "stability": {
-    #             "safer_mode": True,
-    #             "disable_webgl": True,
-    #             "disable_gpu": True,
-    #             "disable_cache": True,
-    #             "use_isolated_profile": True,
-    #         }
-    #     }
+    # ===== EXAMPLE 5: Global stability settings =====
+    # Configure stability for embedded/crash-prone systems.
+    # NOTE: configure_global_stability() must be called BEFORE QApplication creation.
+    # from pdfjs_viewer.stability import configure_global_stability
+    # configure_global_stability(
+    #     disable_gpu=True,
+    #     disable_webgl=True,
+    #     disable_gpu_compositing=True,
     # )
+    # app = QApplication(sys.argv)  # Must come after configure_global_stability()
 
-    # ===== EXAMPLE 6: Customize all three areas =====
-    # Combined customization of features, security, and stability
+    # ===== EXAMPLE 6: Customize features and security together =====
+    # Combined customization of features and security
     # viewer = PDFViewerWidget(
     #     preset="simple",
     #     customize={
@@ -88,10 +84,6 @@ def main():
     #             "allow_external_links": False,
     #             "block_remote_content": True,
     #         },
-    #         "stability": {
-    #             "safer_mode": True,
-    #             "disable_webgl": True,
-    #         }
     #     }
     # )
 

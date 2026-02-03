@@ -7,15 +7,71 @@ This module manages the lifecycle of the separate print process, including:
 - Resource cleanup
 """
 
+import logging
+import os
 import sys
 import json
-import base64
+import tempfile
 import uuid
 from typing import Optional, Dict, Any
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal, QProcess, QTimer
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
+
+logger = logging.getLogger(__name__)
+
+# Environment variable used as sentinel for the print subprocess in frozen apps.
+_FROZEN_PRINT_PROCESS_ENV_VAR = '_PDFJS_PRINT_PROCESS'
+
+# Set to True once freeze_support() has been called by the application.
+_freeze_support_called = False
+
+
+def freeze_support():
+    """Enable PyInstaller support for the QT_DIALOG print handler.
+
+    Call this at the very beginning of your application's entry point,
+    **before** creating ``QApplication``, when using the ``QT_DIALOG``
+    print handler with PyInstaller (both ``--onefile`` and ``--onedir``).
+
+    This is only needed for ``PrintHandler.QT_DIALOG``.  The ``SYSTEM``
+    and ``EMIT_SIGNAL`` handlers do not require this call.
+
+    The function is safe to call in non-frozen environments — it returns
+    immediately if the application is not running under PyInstaller.
+
+    Example::
+
+        import pdfjs_viewer
+
+        def main():
+            pdfjs_viewer.freeze_support()   # before QApplication
+            app = QApplication(sys.argv)
+            ...
+
+        if __name__ == '__main__':
+            main()
+    """
+    global _freeze_support_called
+
+    if not getattr(sys, 'frozen', False):
+        return
+
+    sentinel = os.environ.get(_FROZEN_PRINT_PROCESS_ENV_VAR)
+    if sentinel is None:
+        # Normal application launch — just mark that we were called.
+        _freeze_support_called = True
+        return
+
+    # ----- This IS the print subprocess invocation. -----
+    # Remove the sentinel so it does not propagate to further children.
+    del os.environ[_FROZEN_PRINT_PROCESS_ENV_VAR]
+
+    from .print_process.main import main as print_main
+
+    print_main()
+    sys.exit(0)
 
 
 class PrintManager(QObject):
@@ -45,6 +101,7 @@ class PrintManager(QObject):
         self._socket: Optional[QLocalSocket] = None
         self._socket_name: Optional[str] = None
         self._timeout_timer: Optional[QTimer] = None
+        self._temp_pdf_path: Optional[str] = None
         self._response_buffer = bytearray()
         self._is_cleaning_up = False  # Prevent multiple cleanup calls
 
@@ -52,7 +109,10 @@ class PrintManager(QObject):
         self,
         pdf_data: bytes,
         total_pages: int,
-        timeout_ms: int = 300000  # 5 minutes default
+        timeout_ms: int = 300000,  # 5 minutes default
+        print_dpi: int = 300,
+        print_fit_to_page: bool = True,
+        print_parallel_pages: int = 0  # Deprecated, ignored
     ) -> None:
         """Show print dialog in separate process and execute print if accepted.
 
@@ -64,13 +124,48 @@ class PrintManager(QObject):
             pdf_data: PDF file bytes
             total_pages: Total number of pages
             timeout_ms: Timeout in milliseconds (default 5 minutes)
+            print_dpi: DPI for rendering (default 300)
+            print_fit_to_page: Scale to fit page (default True)
+            print_parallel_pages: Deprecated, ignored (printing is now sequential)
         """
+        # Deprecation warning
+        if print_parallel_pages != 0 and print_parallel_pages != 1:
+            print(
+                "DeprecationWarning: print_parallel_pages is deprecated and ignored. "
+                "Printing is now sequential for better stability."
+            )
+
+        # Store config for later use in request
+        self._print_config = {
+            'dpi': print_dpi,
+            'fit_to_page': print_fit_to_page,
+            'parallel_pages': 1  # Always 1, sequential
+        }
         try:
             # Reset cleanup flag for new operation
             self._is_cleaning_up = False
 
             # Generate unique socket name
             self._socket_name = f"pdfjs_print_{uuid.uuid4().hex[:8]}"
+
+            # Write PDF data to temp file BEFORE starting the process.
+            # waitForStarted() pumps the event loop, so the subprocess
+            # could connect and trigger _on_new_connection before we
+            # return.  _pending_request and the temp file must be ready
+            # by then.
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+            try:
+                tmp.write(pdf_data)
+            finally:
+                tmp.close()
+            self._temp_pdf_path = tmp.name
+
+            self._pending_request = {
+                'command': 'show_and_print',
+                'total_pages': total_pages,
+                'pdf_file': self._temp_pdf_path,
+                'print_config': self._print_config
+            }
 
             # Create IPC server
             self._server = QLocalServer(self)
@@ -81,20 +176,37 @@ class PrintManager(QObject):
             # Wait for connection
             self._server.newConnection.connect(self._on_new_connection)
 
-            # Find print_process.py module
-            print_process_path = self._find_print_process_module()
-            if not print_process_path:
-                self.error_occurred.emit("Failed to find print_process.py module")
-                self._cleanup()
-                return
-
             # Start print process
             self._process = QProcess(self)
+            self._process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
+            self._process.readyReadStandardError.connect(self._on_stderr_ready)
             self._process.finished.connect(self._on_process_finished)
             self._process.errorOccurred.connect(self._on_process_error)
 
             # Get command (PyInstaller compatible)
             executable, args = self._get_print_process_command()
+
+            # In frozen builds, set a sentinel env var so that
+            # freeze_support() in the child process enters the
+            # print-process code path instead of starting the GUI.
+            # Also clean PyInstaller's library path overrides.
+            if getattr(sys, 'frozen', False):
+                from PySide6.QtCore import QProcessEnvironment
+                env = QProcessEnvironment.systemEnvironment()
+                env.insert(_FROZEN_PRINT_PROCESS_ENV_VAR, '1')
+                for var in ('LD_LIBRARY_PATH', 'DYLD_LIBRARY_PATH',
+                            'DYLD_FRAMEWORK_PATH'):
+                    orig_key = f'{var}_ORIG'
+                    if env.contains(orig_key):
+                        orig_val = env.value(orig_key, '')
+                        if orig_val:
+                            env.insert(var, orig_val)
+                        else:
+                            env.remove(var)
+                        env.remove(orig_key)
+                    elif env.contains(var):
+                        env.remove(var)
+                self._process.setProcessEnvironment(env)
 
             self._process.start(executable, args)
 
@@ -109,13 +221,6 @@ class PrintManager(QObject):
             self._timeout_timer.timeout.connect(self._on_timeout)
             self._timeout_timer.start(timeout_ms)
 
-            # Store PDF data for sending after connection
-            self._pending_request = {
-                'command': 'show_and_print',
-                'total_pages': total_pages,
-                'pdf_data': base64.b64encode(pdf_data).decode('ascii')
-            }
-
         except Exception as e:
             self.error_occurred.emit(f"Failed to initialize print process: {str(e)}")
             self._cleanup()
@@ -123,57 +228,28 @@ class PrintManager(QObject):
     def _get_print_process_command(self) -> tuple:
         """Get command to run print process (PyInstaller compatible).
 
+        In frozen environments (both onefile and onedir), the executable is
+        re-launched with a sentinel environment variable that causes
+        ``freeze_support()`` in the application entry point to branch into
+        the print-process code path instead of starting the GUI.
+
+        In a normal Python environment, ``python -m pdfjs_viewer.print_process``
+        is used.
+
         Returns:
-            (executable, args) tuple
+            (executable, args) tuple for ``QProcess.start()``.
         """
-        # Detect if running in PyInstaller frozen app
-        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-            # PyInstaller frozen app
-            # sys._MEIPASS points to the temporary folder where PyInstaller extracts files
-            base_path = Path(sys._MEIPASS)
-
-            # Find the print_process script
-            # PyInstaller extracts to: sys._MEIPASS/pdfjs_viewer/print_process/__main__.py
-            script_path = base_path / 'pdfjs_viewer' / 'print_process' / '__main__.py'
-
-            if script_path.exists():
-                # Run script directly with frozen Python interpreter
-                return (sys.executable, [str(script_path), self._socket_name])
-            else:
-                # Fallback: try to run as module (might work in some PyInstaller configs)
-                return (sys.executable, ['-m', 'pdfjs_viewer.print_process', self._socket_name])
+        if getattr(sys, 'frozen', False):
+            if not _freeze_support_called:
+                logger.warning(
+                    "pdfjs_viewer.freeze_support() was not called. "
+                    "QT_DIALOG print handler will not work correctly in "
+                    "frozen apps.  Add pdfjs_viewer.freeze_support() at "
+                    "the start of your main()."
+                )
+            return (sys.executable, [self._socket_name])
         else:
-            # Normal Python environment - use -m
             return (sys.executable, ['-m', 'pdfjs_viewer.print_process', self._socket_name])
-
-    def _find_print_process_module(self) -> Optional[Path]:
-        """Find the print_process.py module.
-
-        Returns:
-            Path to print_process.py or None if not found
-
-        Note: This method is kept for backwards compatibility but is no longer used.
-        Use _get_print_process_command() instead.
-        """
-        try:
-            # Try to import the module to get its location
-            import pdfjs_viewer.print_process
-            module_file = pdfjs_viewer.print_process.__file__
-            if module_file:
-                return Path(module_file)
-        except Exception:
-            pass
-
-        # Fallback: look relative to this file
-        try:
-            current_file = Path(__file__)
-            print_process = current_file.parent / 'print_process.py'
-            if print_process.exists():
-                return print_process
-        except Exception:
-            pass
-
-        return None
 
     def _on_new_connection(self):
         """Handle new connection from print process."""
@@ -197,6 +273,9 @@ class PrintManager(QObject):
             self.error_occurred.emit(f"Failed to send request: {str(e)}")
             self._cleanup()
 
+    # Maximum response buffer size (10 MB) to prevent memory exhaustion
+    MAX_RESPONSE_BUFFER_SIZE = 10 * 1024 * 1024
+
     def _on_ready_read(self):
         """Handle data received from print process."""
         if not self._socket:
@@ -204,7 +283,15 @@ class PrintManager(QObject):
 
         try:
             # Read all available data
-            self._response_buffer.extend(self._socket.readAll().data())
+            new_data = self._socket.readAll().data()
+
+            # Check buffer size limit to prevent memory exhaustion
+            if len(self._response_buffer) + len(new_data) > self.MAX_RESPONSE_BUFFER_SIZE:
+                self.error_occurred.emit("Response buffer exceeded maximum size")
+                self._cleanup()
+                return
+
+            self._response_buffer.extend(new_data)
 
             # Try to parse as JSON
             try:
@@ -281,19 +368,38 @@ class PrintManager(QObject):
             exit_code: Process exit code
             exit_status: QProcess exit status
         """
-        # Only report error if process crashed (not normal exit 0 or 1)
+        # The subprocess has exited.  Any data it wrote to the socket
+        # is now fully buffered on our side.  Drain it before cleanup
+        # destroys the socket.
+        self._drain_socket()
+
+        # Read stderr for diagnostics regardless of exit code.
+        stderr = ''
+        if self._process:
+            stderr = self._process.readAllStandardError().data().decode(
+                'utf-8', errors='ignore'
+            ).strip()
+
+        if stderr:
+            logger.info("Print process stderr:\n%s", stderr)
+
         # Exit code 0 = success, 1 = user cancelled (normal), >1 = error
         if exit_code > 1:
-            # Process crashed or failed unexpectedly
-            if self._process:
-                stderr = self._process.readAllStandardError().data().decode('utf-8', errors='ignore')
-                error_msg = f"Print process exited unexpectedly (code {exit_code})"
-                if stderr:
-                    error_msg += f"\n{stderr}"
-                self.error_occurred.emit(error_msg)
+            error_msg = f"Print process exited unexpectedly (code {exit_code})"
+            if stderr:
+                error_msg += f"\n{stderr}"
+            self.error_occurred.emit(error_msg)
 
         # Cleanup always happens regardless of exit code
         self._cleanup()
+
+    def _on_stderr_ready(self):
+        """Forward subprocess stderr to parent stderr in real-time."""
+        if self._process:
+            data = self._process.readAllStandardError().data()
+            if data:
+                sys.stderr.buffer.write(data)
+                sys.stderr.buffer.flush()
 
     def _on_process_error(self, error):
         """Handle process error.
@@ -311,6 +417,40 @@ class PrintManager(QObject):
         """Handle operation timeout."""
         self.error_occurred.emit("Print operation timed out")
         self._cleanup()
+
+    def _drain_socket(self):
+        """Read any data already buffered in the socket and try to parse it.
+
+        Called before cleanup destroys the socket so that a response that
+        arrived between the last ``readyRead`` signal and now is not lost.
+        """
+        if self._socket is None:
+            return
+
+        try:
+            # Give the OS a moment to deliver the last bytes.
+            if self._socket.state() == QLocalSocket.LocalSocketState.ConnectedState:
+                self._socket.waitForReadyRead(500)
+
+            # Read everything sitting in the buffer.
+            while self._socket.bytesAvailable() > 0:
+                chunk = self._socket.readAll().data()
+                if not chunk:
+                    break
+                if len(self._response_buffer) + len(chunk) > self.MAX_RESPONSE_BUFFER_SIZE:
+                    break
+                self._response_buffer.extend(chunk)
+
+            # Try to parse whatever we have collected.
+            if self._response_buffer:
+                try:
+                    response = json.loads(self._response_buffer.decode('utf-8'))
+                    self._response_buffer.clear()
+                    self._handle_response(response)
+                except json.JSONDecodeError:
+                    pass  # Incomplete — nothing we can do
+        except (RuntimeError, OSError):
+            pass  # Socket already gone
 
     def _cleanup(self):
         """Clean up resources.
@@ -332,36 +472,12 @@ class PrintManager(QObject):
             finally:
                 self._timeout_timer = None
 
-        # Close socket - but give it time to read any pending data first
-        if self._socket is not None:
-            try:
-                # Allow any pending reads to complete
-                if self._socket.state() == QLocalSocket.LocalSocketState.ConnectedState:
-                    self._socket.waitForReadyRead(200)  # Brief wait for final data
-                self._socket.disconnectFromServer()
-                self._socket.deleteLater()
-            except RuntimeError:
-                pass  # Already deleted
-            finally:
-                self._socket = None
-
-        # Stop server - this closes all connections
-        if self._server is not None:
-            try:
-                self._server.close()
-                self._server.deleteLater()
-            except RuntimeError:
-                pass  # Already deleted
-            finally:
-                self._server = None
-
-        # Wait for process to finish naturally (don't force terminate unless necessary)
+        # Wait for process to finish first — this ensures the subprocess
+        # has had a chance to write its response before we touch the socket.
         if self._process is not None:
             try:
                 if self._process.state() == QProcess.ProcessState.Running:
-                    # Give process time to finish naturally (it should exit on its own)
                     if not self._process.waitForFinished(3000):
-                        # Only terminate if it didn't finish in time
                         self._process.terminate()
                         if not self._process.waitForFinished(2000):
                             self._process.kill()
@@ -372,6 +488,38 @@ class PrintManager(QObject):
                 pass  # Already deleted
             finally:
                 self._process = None
+
+        # Drain any remaining data from the socket before destroying it.
+        self._drain_socket()
+
+        # Close socket
+        if self._socket is not None:
+            try:
+                self._socket.disconnectFromServer()
+                self._socket.deleteLater()
+            except RuntimeError:
+                pass  # Already deleted
+            finally:
+                self._socket = None
+
+        # Stop server
+        if self._server is not None:
+            try:
+                self._server.close()
+                self._server.deleteLater()
+            except RuntimeError:
+                pass  # Already deleted
+            finally:
+                self._server = None
+
+        # Delete temp PDF file
+        if self._temp_pdf_path is not None:
+            try:
+                Path(self._temp_pdf_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+            finally:
+                self._temp_pdf_path = None
 
         # Clear response buffer
         if hasattr(self, '_response_buffer'):

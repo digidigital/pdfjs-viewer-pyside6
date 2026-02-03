@@ -20,13 +20,17 @@ class PDFJavaScriptBridge(QObject):
     # Signals emitted to Python
     save_requested = Signal(bytes, str)  # (pdf_data, filename)
     print_requested = Signal(bytes)  # (pdf_data)
+    print_pdf_requested = Signal()  # Request to print (Qt handles everything)
     load_requested = Signal(str)  # (file_path)
+    open_pdf_requested = Signal()  # Request to show file dialog and load PDF
     stamp_image_requested = Signal(str)  # (image_path)
     pdf_loaded = Signal(dict)  # (metadata)
-    annotation_changed = Signal()
+    save_started = Signal()  # JS acknowledged save request, saveDocument() running
+    annotation_changed = Signal()  # Any annotation modification
     page_changed = Signal(int, int)  # (current_page, total_pages)
     error_occurred = Signal(str)  # (error_message)
     text_copied = Signal(str)  # (copied_text)
+    pdf_data_ready = Signal(bytes)  # PDF data pushed from JS for saving
 
     def __init__(self, parent: Optional[QObject] = None):
         """Initialize the bridge.
@@ -114,6 +118,28 @@ class PDFJavaScriptBridge(QObject):
         except Exception as e:
             self.error_occurred.emit(f"Load error: {str(e)}")
 
+    @Slot()
+    def request_open_pdf(self):
+        """Called from JavaScript when PDF.js load button is clicked.
+
+        This simply emits a signal to trigger the Qt-side open PDF flow.
+        The backend handles everything: showing file dialog, checking unsaved
+        changes, and loading the PDF. This ensures consistent behavior whether
+        the load is triggered from PDF.js or from a Qt button.
+        """
+        self.open_pdf_requested.emit()
+
+    @Slot()
+    def request_print_pdf(self):
+        """Called from JavaScript when PDF.js print button is clicked.
+
+        This simply emits a signal to trigger the Qt-side print flow.
+        The backend handles everything: getting PDF with annotations and printing.
+        This ensures consistent behavior whether print is triggered from PDF.js
+        or from a Qt button.
+        """
+        self.print_pdf_requested.emit()
+
     @Slot(result=str)
     def load_stamp_dialog(self) -> str:
         """Called from JavaScript when stamp image load is clicked.
@@ -155,8 +181,22 @@ class PDFJavaScriptBridge(QObject):
             self.error_occurred.emit(f"Metadata parse error: {str(e)}")
 
     @Slot()
+    def notify_save_started(self):
+        """Called from JavaScript when performDownload() begins processing.
+
+        This acknowledges that the JS save request was received and
+        saveDocument() is about to run. Python uses this to distinguish
+        'JS is working on it' from 'JS never got the request'.
+        """
+        self.save_started.emit()
+
+    @Slot()
     def notify_annotation_changed(self):
-        """Called from JavaScript when annotations are modified."""
+        """Called from JavaScript when annotations are modified.
+
+        This triggers the Qt-side AnnotationStateTracker to mark the
+        document as having unsaved changes.
+        """
         self.annotation_changed.emit()
 
     @Slot(int, int)
@@ -233,3 +273,20 @@ class PDFJavaScriptBridge(QObject):
         except Exception as e:
             error_msg = self.tr['clipboard_error'].format(error=str(e))
             self.error_occurred.emit(error_msg)
+
+    @Slot(str)
+    def push_pdf_data(self, data_base64: str):
+        """Called from JavaScript to push PDF data for saving.
+
+        This is used by the handle_unsaved_changes flow to get PDF data
+        with annotations. JavaScript calls this after preparing the data,
+        avoiding the issue with runJavaScript not properly handling Promises.
+
+        Args:
+            data_base64: PDF data encoded as base64 string.
+        """
+        try:
+            pdf_data = base64.b64decode(data_base64)
+            self.pdf_data_ready.emit(pdf_data)
+        except Exception as e:
+            self.error_occurred.emit(f"PDF data error: {str(e)}")

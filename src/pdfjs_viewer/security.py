@@ -9,8 +9,10 @@ from PySide6.QtWebEngineCore import (
     QWebEngineSettings,
 )
 from PySide6.QtGui import QDesktopServices
+from PySide6.QtWidgets import QMessageBox
 
 from .config import PDFSecurityConfig
+from .ui_translations import get_translations
 
 
 class PDFWebEnginePage(QWebEnginePage):
@@ -32,6 +34,28 @@ class PDFWebEnginePage(QWebEnginePage):
         super().__init__(profile, parent)
         self.security_config = security_config
         self._parent_widget = parent
+
+    def javaScriptConfirm(self, securityOrigin: QUrl, msg: str) -> bool:
+        """Intercept JavaScript confirm dialogs including beforeunload.
+
+        The beforeunload event in browsers triggers a confirm dialog asking
+        "Are you sure you want to leave this page?". By always returning True,
+        we suppress this dialog completely. Qt handles unsaved changes through
+        its own mechanism (AnnotationStateTracker + handle_unsaved_changes).
+
+        This is the definitive way to prevent PDF.js's beforeunload dialog
+        from appearing, regardless of how PDF.js registers its handler.
+
+        Args:
+            securityOrigin: Origin of the script requesting confirmation.
+            msg: The confirmation message (ignored).
+
+        Returns:
+            True always - allows navigation without showing browser dialog.
+        """
+        # Always allow navigation - Qt handles unsaved changes separately
+        # through AnnotationStateTracker and handle_unsaved_changes()
+        return True
 
     def acceptNavigationRequest(
         self,
@@ -63,8 +87,8 @@ class PDFWebEnginePage(QWebEnginePage):
         if scheme == "blob":
             return True
 
-        # Handle http/https links
-        if scheme in ["http", "https"]:
+        # Handle allowed protocol links
+        if scheme in self.security_config.allowed_protocols:
             if not self.security_config.allow_external_links:
                 # Block and emit signal
                 if self._parent_widget and hasattr(
@@ -75,7 +99,25 @@ class PDFWebEnginePage(QWebEnginePage):
 
             # Open in external browser instead of navigating
             if nav_type == QWebEnginePage.NavigationType.NavigationTypeLinkClicked:
-                QDesktopServices.openUrl(url)
+                if self.security_config.confirm_before_external_link:
+                    # Show confirmation dialog with translated buttons
+                    translations = get_translations()
+                    title = translations['open_link_title']
+                    message = translations['open_link_message'].format(url=url.toString())
+                    dialog = QMessageBox(self._parent_widget)
+                    dialog.setWindowTitle(title)
+                    dialog.setText(message)
+                    dialog.setIcon(QMessageBox.Icon.Question)
+                    open_btn = dialog.addButton(
+                        translations['button_open'], QMessageBox.ButtonRole.AcceptRole)
+                    dialog.addButton(
+                        translations['button_cancel'], QMessageBox.ButtonRole.RejectRole)
+                    dialog.setDefaultButton(open_btn)
+                    dialog.exec()
+                    if dialog.clickedButton() == open_btn:
+                        QDesktopServices.openUrl(url)
+                else:
+                    QDesktopServices.openUrl(url)
                 return False
 
             # Allow loading remote content if configured

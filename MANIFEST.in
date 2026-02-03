@@ -5,7 +5,7 @@ recursive-include src/pdfjs_viewer/pdfjs *
 include src/pdfjs_viewer/templates/*.js
 
 # Include PyInstaller hooks
-include src/pdfjs_viewer/hooks/*.py
+include src/pdfjs_viewer/pyinstaller_hooks/*.py
 
 # Include print_process module files
 recursive-include src/pdfjs_viewer/print_process *.py
@@ -14,9 +14,6 @@ recursive-include src/pdfjs_viewer/print_process *.py
 include README.md
 include LICENSE
 include CHANGELOG.md
-include PROCESS_PRINTING_IMPLEMENTATION.md
-include PROCESS_PRINTING_CHANGELOG.md
-include CRITICAL_REVIEW_AND_FIXES.md
 
 # Exclude unnecessary files
 global-exclude __pycache__
@@ -25,4 +22,4 @@ global-exclude .DS_Store
 
 # Exclude PDF.js demo PDF file (for production - keeps package size smaller)
 # This prevents auto-loading a sample PDF on initialization
-# exclude src/pdfjs_viewer/pdfjs/web/compressed.tracemonkey-pldi-09.pdf
+exclude src/pdfjs_viewer/pdfjs/web/compressed.tracemonkey-pldi-09.pdf

@@ -85,7 +85,7 @@ class GenericDocumentViewerWindow(QMainWindow):
         load_btn.clicked.connect(self._load_document)
         control_layout.addWidget(load_btn)
 
-        load_sample_btn = QPushButton("📄 Load Sample")
+        load_sample_btn = QPushButton("📄 Load (HTML-Wrapped) Sample")
         load_sample_btn.clicked.connect(self._load_sample)
         control_layout.addWidget(load_sample_btn)
 
@@ -95,8 +95,19 @@ class GenericDocumentViewerWindow(QMainWindow):
 
         # Create viewer
         config = PDFViewerConfig()
+        config.features.load_enabled = True
         self.viewer = PDFViewerWidget(config=config)
         main_layout.addWidget(self.viewer, stretch=1)
+
+        # Connect signals
+        self.viewer.pdf_loaded.connect(
+            lambda meta: self.statusBar().showMessage(
+                f"PDF loaded: {meta.get('filename', 'Unknown')} ({meta.get('numPages', 0)} pages)"
+            )
+        )
+        self.viewer.error_occurred.connect(
+            lambda msg: print(f"Error: {msg}")
+        )
 
         # Show blank page initially
         self.viewer.show_blank_page()

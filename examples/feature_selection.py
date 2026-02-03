@@ -145,9 +145,9 @@ class FeatureSelectionWindow(QMainWindow):
         self.viewer.error_occurred.connect(
             lambda msg: print(f"Error: {msg}")
         )
-        
+
         # Show blank page initially
-        # self.viewer.show_blank_page()
+        self.viewer.show_blank_page()
 
     def _create_feature_group(self, title: str, features: list) -> QGroupBox:
         """Create a group box with feature checkboxes.
@@ -254,8 +254,8 @@ class FeatureSelectionWindow(QMainWindow):
         # Insert new viewer at position 0 (left side, before control panel)
         layout.insertWidget(0, self.viewer, stretch=4)
 
-        # Show blank page istead of demo PDF
-        # self.viewer.show_blank_page()
+        # Show blank page
+        self.viewer.show_blank_page()
 
         print("Viewer reloaded successfully!")
 

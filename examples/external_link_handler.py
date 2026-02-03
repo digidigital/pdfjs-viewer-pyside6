@@ -1,21 +1,19 @@
 """External link handling demonstration.
 
 This example shows how to handle external links clicked in PDFs, including:
-1. Detecting when external links are clicked
-2. Blocking external links for security
-3. Custom handling (ask user, log, open in browser, etc.)
-4. Allowing specific domains while blocking others
+1. Blocking external links for security
+2. Asking user before opening (built-in confirmation dialog)
+3. Allowing all external links without confirmation
 """
 import sys
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QMainWindow, QWidget, QVBoxLayout,
     QPushButton, QLabel, QTextEdit, QGroupBox, QRadioButton, QMessageBox,
     QFileDialog
 )
-from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import Qt
 
 from pdfjs_viewer import PDFViewerWidget, PDFViewerConfig, PDFSecurityConfig
 
@@ -47,7 +45,7 @@ class ExternalLinkHandlerWindow(QMainWindow):
 
         # PDF viewer
         self.viewer = None
-        self._create_viewer_with_blocking()  # Start with blocking mode
+        self._create_viewer_blocking()  # Start with blocking mode
         main_layout.addWidget(self.viewer, stretch=1)
 
         # Event log
@@ -60,7 +58,7 @@ class ExternalLinkHandlerWindow(QMainWindow):
         main_layout.addWidget(self.log)
 
         # Load button
-        load_btn = QPushButton("📁 Load PDF")
+        load_btn = QPushButton("Load PDF")
         load_btn.clicked.connect(self._load_pdf)
         main_layout.addWidget(load_btn)
 
@@ -77,11 +75,11 @@ class ExternalLinkHandlerWindow(QMainWindow):
         self.block_radio.toggled.connect(self._on_mode_changed)
         layout.addWidget(self.block_radio)
 
-        self.ask_radio = QRadioButton("Ask Before Opening (User Choice)")
+        self.ask_radio = QRadioButton("Ask Before Opening (Built-in Confirmation)")
         self.ask_radio.toggled.connect(self._on_mode_changed)
         layout.addWidget(self.ask_radio)
 
-        self.allow_radio = QRadioButton("Allow All External Links")
+        self.allow_radio = QRadioButton("Allow All External Links (No Confirmation)")
         self.allow_radio.toggled.connect(self._on_mode_changed)
         layout.addWidget(self.allow_radio)
 
@@ -89,7 +87,7 @@ class ExternalLinkHandlerWindow(QMainWindow):
         desc_label = QLabel(
             "<small>"
             "<b>Block:</b> All external links are blocked and logged<br>"
-            "<b>Ask:</b> User is prompted before opening each link<br>"
+            "<b>Ask:</b> Built-in confirmation dialog before opening each link<br>"
             "<b>Allow:</b> Links open automatically in external browser"
             "</small>"
         )
@@ -103,15 +101,15 @@ class ExternalLinkHandlerWindow(QMainWindow):
         """Handle link handling mode change."""
         if self.block_radio.isChecked():
             self._log("Mode: Blocking all external links")
-            self._recreate_viewer(allow_links=False)
+            self._recreate_viewer_blocking()
         elif self.ask_radio.isChecked():
-            self._log("Mode: Asking before opening links")
-            self._recreate_viewer(allow_links=False)  # Block but handle manually
+            self._log("Mode: Asking before opening links (built-in dialog)")
+            self._recreate_viewer_ask()
         elif self.allow_radio.isChecked():
             self._log("Mode: Allowing all external links")
-            self._recreate_viewer(allow_links=True)
+            self._recreate_viewer_allow()
 
-    def _create_viewer_with_blocking(self):
+    def _create_viewer_blocking(self):
         """Create viewer that blocks external links."""
         config = PDFViewerConfig(
             security=PDFSecurityConfig(
@@ -120,43 +118,81 @@ class ExternalLinkHandlerWindow(QMainWindow):
             )
         )
         config.features.load_enabled = True
-        
+
         self.viewer = PDFViewerWidget(config=config)
 
-        # Connect signal to handle blocked links
+        # Connect signal to log blocked links
         self.viewer.external_link_blocked.connect(self._on_external_link_blocked)
 
         # Show blank page initially
         self.viewer.show_blank_page()
 
-    def _recreate_viewer(self, allow_links: bool):
-        """Recreate viewer with new configuration."""
-        # Remove old viewer
+    def _recreate_viewer_blocking(self):
+        """Recreate viewer with blocking configuration."""
+        self._remove_viewer()
+
+        config = PDFViewerConfig(
+            security=PDFSecurityConfig(
+                allow_external_links=False,
+                block_remote_content=True,
+            )
+        )
+        config.features.load_enabled = True
+
+        self.viewer = PDFViewerWidget(config=config)
+        self.viewer.external_link_blocked.connect(self._on_external_link_blocked)
+
+        self._insert_viewer()
+
+    def _recreate_viewer_ask(self):
+        """Recreate viewer with ask-before-opening configuration.
+
+        Uses the built-in confirm_before_external_link feature.
+        """
+        self._remove_viewer()
+
+        config = PDFViewerConfig(
+            security=PDFSecurityConfig(
+                allow_external_links=True,   # Allow links (with confirmation)
+                confirm_before_external_link=True,  # Show built-in confirmation dialog
+                block_remote_content=True,
+                allowed_protocols=["mailto", "http", "https"],
+            ),
+        )
+        config.features.load_enabled = True
+
+        self.viewer = PDFViewerWidget(config=config)
+
+        self._insert_viewer()
+
+    def _recreate_viewer_allow(self):
+        """Recreate viewer that allows all external links without confirmation."""
+        self._remove_viewer()
+
+        config = PDFViewerConfig(
+            security=PDFSecurityConfig(
+                allow_external_links=True,   # Allow all links
+                confirm_before_external_link=False,  # No confirmation dialog
+                block_remote_content=False,
+            ),
+        )
+        config.features.load_enabled = True
+
+        self.viewer = PDFViewerWidget(config=config)
+
+        self._insert_viewer()
+
+    def _remove_viewer(self):
+        """Remove the current viewer from layout."""
         if self.viewer:
             layout = self.centralWidget().layout()
             layout.removeWidget(self.viewer)
             self.viewer.deleteLater()
 
-        # Create new viewer
-        config = PDFViewerConfig(
-            security=PDFSecurityConfig(
-                allow_external_links=allow_links,
-                block_remote_content=not allow_links,
-            )
-        )
-        config.features.load_enabled = True
-        
-        self.viewer = PDFViewerWidget(config=config)
-
-        # Connect signal
-        if not allow_links:
-            self.viewer.external_link_blocked.connect(self._on_external_link_blocked)
-
-        # Insert viewer back into layout (before log label)
+    def _insert_viewer(self):
+        """Insert viewer into layout and show blank page."""
         layout = self.centralWidget().layout()
         layout.insertWidget(2, self.viewer, stretch=1)
-
-        # Show blank page
         self.viewer.show_blank_page()
 
     def _on_external_link_blocked(self, url: str):
@@ -169,23 +205,7 @@ class ExternalLinkHandlerWindow(QMainWindow):
         Args:
             url: The blocked URL
         """
-        self._log(f"🚫 External link blocked: {url}")
-
-        # If in "Ask" mode, prompt user
-        if self.ask_radio.isChecked():
-            reply = QMessageBox.question(
-                self,
-                "External Link",
-                f"Open external link in browser?\n\n{url}",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No
-            )
-
-            if reply == QMessageBox.StandardButton.Yes:
-                self._log(f"✅ User allowed: Opening {url}")
-                QDesktopServices.openUrl(QUrl(url))
-            else:
-                self._log(f"❌ User denied: Not opening {url}")
+        self._log(f"External link blocked: {url}")
 
     def _load_pdf(self):
         """Load a PDF file."""
@@ -199,9 +219,9 @@ class ExternalLinkHandlerWindow(QMainWindow):
         if file_path:
             try:
                 self.viewer.load_pdf(file_path)
-                self._log(f"📄 Loaded: {Path(file_path).name}")
+                self._log(f"Loaded: {Path(file_path).name}")
             except Exception as e:
-                self._log(f"❌ Error loading PDF: {e}")
+                self._log(f"Error loading PDF: {e}")
                 QMessageBox.critical(self, "Load Error", f"Failed to load PDF:\n{e}")
 
     def _log(self, message: str):
@@ -232,7 +252,7 @@ def main():
         "<p><b>Strategies:</b></p>"
         "<ul>"
         "<li><b>Block:</b> Links are blocked and logged (secure)</li>"
-        "<li><b>Ask:</b> User is prompted before opening (flexible)</li>"
+        "<li><b>Ask:</b> Built-in confirmation dialog before opening (flexible)</li>"
         "<li><b>Allow:</b> Links open automatically (convenient)</li>"
         "</ul>"
         "<br>"

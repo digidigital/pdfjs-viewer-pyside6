@@ -11,21 +11,9 @@ occurs when using the alt-text dialog with Qt WebEngine.
 import sys
 from pathlib import Path
 
-# Try to import PySide6 first, fall back to PyQt6
-try:
-    from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel
-    from PySide6.QtCore import Qt
-    QT_BINDING = "PySide6"
-except ImportError:
-    from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel
-    from PyQt6.QtCore import Qt
-    QT_BINDING = "PyQt6"
+from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel
 
-# Import from the local package
-if QT_BINDING == "PySide6":
-    from pdfjs_viewer import PDFViewerWidget, PDFViewerConfig, PDFFeatures
-else:
-    from pdfjs_viewer import PDFViewerWidget, PDFViewerConfig, PDFFeatures
+from pdfjs_viewer import PDFViewerWidget, PDFViewerConfig, PDFFeatures
 
 
 class MainWindow(QMainWindow):
@@ -66,6 +54,7 @@ class MainWindow(QMainWindow):
         features = PDFFeatures(
             stamp_enabled=True,  # Stamps are enabled
             stamp_alttext_enabled=False,  # But alt-text dialog is disabled
+            load_enabled=True,  # Enable load button
         )
 
         config = PDFViewerConfig(features=features)
@@ -78,21 +67,19 @@ class MainWindow(QMainWindow):
 
         # Connect signals
         self.pdf_viewer.pdf_loaded.connect(self._on_pdf_loaded)
+        self.pdf_viewer.error_occurred.connect(
+            lambda msg: print(f"Error: {msg}")
+        )
 
-        # Load example PDF if available
-        example_pdf = Path(__file__).parent / "compressed.tracemonkey-pldi-09.pdf"
-        if example_pdf.exists():
-            self.pdf_viewer.load_pdf(str(example_pdf))
-            self.status_label.setText(f"Loaded: {example_pdf.name}")
-        else:
-            self.status_label.setText("No example PDF found. Use File menu to load a PDF.")
+        # Show blank page initially
+        self.pdf_viewer.show_blank_page()
 
     def _on_pdf_loaded(self, metadata):
         """Handle PDF loaded event."""
         num_pages = metadata.get('numPages', 0)
-        title = metadata.get('title', 'Untitled')
+        filename = metadata.get('filename', 'Untitled')
         self.status_label.setText(
-            f"Loaded: {title} ({num_pages} pages) - "
+            f"Loaded: {filename} ({num_pages} pages) - "
             f"Stamp alt-text feature is DISABLED"
         )
 
@@ -104,7 +91,6 @@ def main():
     print("=" * 70)
     print("PDF Viewer - Stamp Alt-Text Disabled Example")
     print("=" * 70)
-    print(f"Qt Binding: {QT_BINDING}")
     print()
     print("This example demonstrates how to disable the alt-text dialog for")
     print("stamp annotations as a workaround for Qt WebEngine crashes.")
@@ -112,7 +98,8 @@ def main():
     print("Configuration used:")
     print("  features = PDFFeatures(")
     print("      stamp_enabled=True,")
-    print("      stamp_alttext_enabled=False  # Disables alt-text dialog")
+    print("      stamp_alttext_enabled=False,  # Disables alt-text dialog")
+    print("      load_enabled=True,")
     print("  )")
     print("=" * 70)
     print()
@@ -120,7 +107,7 @@ def main():
     window = MainWindow()
     window.show()
 
-    sys.exit(app.exec() if QT_BINDING == "PyQt6" else app.exec())
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

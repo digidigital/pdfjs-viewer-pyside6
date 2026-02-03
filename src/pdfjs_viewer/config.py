@@ -3,7 +3,6 @@
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List
-import os
 
 class PrintHandler(str, Enum):
     """Print handler options.
@@ -40,10 +39,25 @@ class PDFFeatures:
     # signature_enabled: bool = True
     # comment_enabled: bool = True
 
-    # Navigation and view modes 
+    # Navigation and view modes
     bookmark_enabled: bool = False
     scroll_mode_buttons: bool = True
     spread_mode_buttons: bool = True
+
+    # Unsaved changes behavior: "disabled", "prompt", "auto_save"
+    # - disabled: No warning, allow navigation without prompting
+    # - prompt: Show dialog with Save As / Save / Discard options
+    # - auto_save: Automatically save annotations before leaving
+    unsaved_changes_action: str = "disabled"
+
+    def __post_init__(self):
+        """Validate configuration values."""
+        valid_actions = ("disabled", "prompt", "auto_save")
+        if self.unsaved_changes_action not in valid_actions:
+            raise ValueError(
+                f"unsaved_changes_action must be one of {valid_actions}, "
+                f"got '{self.unsaved_changes_action}'"
+            )
 
     def to_js_config(self) -> dict:
         """Convert to JavaScript configuration object."""
@@ -63,6 +77,7 @@ class PDFFeatures:
             "bookmark": self.bookmark_enabled,
             "scrollMode": self.scroll_mode_buttons,
             "spreadMode": self.spread_mode_buttons,
+            "unsavedChangesAction": self.unsaved_changes_action,
         }
 
 
@@ -70,11 +85,12 @@ class PDFFeatures:
 class PDFSecurityConfig:
     """Security settings for the PDF viewer.
 
-    Controls external link access and remote content loading.
+    Controls external link access, remote content loading, and link confirmation.
     Note: JavaScript is always enabled (required for PDF.js viewer).
     Chromium sandbox is controlled globally via stability.configure_global_stability().
     """
     allow_external_links: bool = False
+    confirm_before_external_link: bool = True  # Show confirmation dialog before opening
     block_remote_content: bool = True
 
     # Allowed protocols for links
@@ -87,43 +103,6 @@ class PDFSecurityConfig:
 
 
 @dataclass
-class PDFStabilityConfig:
-    """Stability and crash prevention settings.
-
-    Controls WebEngine stability features to reduce crashes and improve reliability.
-    These settings help prevent common WebEngine crash scenarios.
-    """
-    # Profile isolation (recommended)
-    use_isolated_profile: bool = True  # Each viewer gets its own profile
-    profile_name: str = None  # Custom profile name (auto-generated if None)
-
-    # WebGL and GPU settings (major crash sources)
-    disable_webgl: bool = True  # Disable WebGL rendering
-    disable_gpu: bool = True  # Disable GPU acceleration
-    disable_gpu_compositing: bool = True  # Disable GPU compositing
-
-    # Cache and storage settings
-    disable_cache: bool = True  # Disable disk cache
-    disable_local_storage: bool = True  # Disable localStorage
-    disable_session_storage: bool = True  # Disable sessionStorage
-    disable_databases: bool = True  # Disable Web SQL and IndexedDB
-
-    # Service worker and background features
-    disable_service_workers: bool = True  # Disable service workers
-    disable_background_networking: bool = True  # Disable background network requests
-
-    # Rendering and compositing
-    disable_software_rasterizer: bool = False  # Keep software rendering enabled
-    force_prefers_reduced_motion: bool = False  # Reduce animations
-
-    # Memory management
-    max_cache_size_mb: int = 0  # 0 = minimal cache
-
-    # Safer mode preset (when True, overrides individual settings)
-    safer_mode: bool = True  # Enable recommended stability settings
-
-
-@dataclass
 class PDFViewerConfig:
     """Main configuration for PDF viewer widget.
 
@@ -131,23 +110,33 @@ class PDFViewerConfig:
     """
     features: PDFFeatures = field(default_factory=PDFFeatures)
     security: PDFSecurityConfig = field(default_factory=PDFSecurityConfig)
-    stability: PDFStabilityConfig = field(default_factory=PDFStabilityConfig)
 
     # Behavior
     auto_open_folder_on_save: bool = True
-    confirm_before_external_link: bool = True
     disable_context_menu: bool = True  # Disable QWebEngine's native context menu
 
     # Print handling
     print_handler: PrintHandler = PrintHandler.SYSTEM
     print_dpi: int = 300  # DPI for Qt print dialog rendering
     print_fit_to_page: bool = True  # Scale to fit page vs actual size
-    print_parallel_pages: int = os.cpu_count() - 1  # Number of pages to render in parallel (Qt dialog only)
+    # Deprecated: print_parallel_pages is ignored (printing is now sequential)
+    print_parallel_pages: int = 1  # Deprecated, kept for backwards compatibility
 
     # PDF.js settings
     default_zoom: str = "auto"  # "auto", "page-fit", "page-width", or percentage
     sidebar_visible: bool = False
     spread_mode: str = "none"  # "none", "odd", "even"
+
+    def __post_init__(self):
+        """Validate configuration and show deprecation warnings."""
+        # Deprecation warning for print_parallel_pages
+        if self.print_parallel_pages != 1:
+            print(
+                "DeprecationWarning: print_parallel_pages is deprecated and ignored. "
+                "Printing is now sequential for better stability and memory management."
+            )
+            # Reset to 1 (ignored anyway, but for consistency)
+            object.__setattr__(self, 'print_parallel_pages', 1)
 
 
 def validate_pdf_file(file_path: str) -> bool:
@@ -255,15 +244,15 @@ class ConfigPresets:
                 bookmark_enabled=False,
                 scroll_mode_buttons=False,
                 spread_mode_buttons=False,
+                unsaved_changes_action="disabled",  # No editing possible
             ),
             security=PDFSecurityConfig(
                 allow_external_links=False,
+                confirm_before_external_link=True,
                 block_remote_content=True,
                 allowed_protocols=[],
             ),
-            stability=PDFStabilityConfig(safer_mode=True),
             auto_open_folder_on_save=False,
-            confirm_before_external_link=True,
             disable_context_menu=True,
             print_handler=PrintHandler.SYSTEM,
             sidebar_visible=True,
@@ -300,15 +289,15 @@ class ConfigPresets:
                 bookmark_enabled=False,
                 scroll_mode_buttons=False,
                 spread_mode_buttons=False,
+                unsaved_changes_action="prompt",  # User decides
             ),
             security=PDFSecurityConfig(
                 allow_external_links=True,
+                confirm_before_external_link=True,
                 block_remote_content=True,
                 allowed_protocols=["http", "https"],
             ),
-            stability=PDFStabilityConfig(safer_mode=True),
             auto_open_folder_on_save=True,
-            confirm_before_external_link=True,
             disable_context_menu=True,
             print_handler=PrintHandler.SYSTEM,
             sidebar_visible=False,
@@ -345,15 +334,15 @@ class ConfigPresets:
                 bookmark_enabled=False,
                 scroll_mode_buttons=True,
                 spread_mode_buttons=True,
+                unsaved_changes_action="prompt",  # User decides
             ),
             security=PDFSecurityConfig(
                 allow_external_links=True,
+                confirm_before_external_link=True,
                 block_remote_content=False,
                 allowed_protocols=["http", "https", "mailto"],
             ),
-            stability=PDFStabilityConfig(safer_mode=True, disable_webgl=True),
             auto_open_folder_on_save=True,
-            confirm_before_external_link=True,
             disable_context_menu=True,  # We provide our own context menu
             print_handler=PrintHandler.QT_DIALOG,
             sidebar_visible=True,
@@ -389,19 +378,15 @@ class ConfigPresets:
                 bookmark_enabled=False,
                 scroll_mode_buttons=False,
                 spread_mode_buttons=False,
+                unsaved_changes_action="prompt",  # Forms often have unsaved data
             ),
             security=PDFSecurityConfig(
                 allow_external_links=False,
+                confirm_before_external_link=True,
                 block_remote_content=True,
                 allowed_protocols=[],
             ),
-            stability=PDFStabilityConfig(
-                safer_mode=False,  # Forms may need more features
-                disable_webgl=True,
-                disable_gpu=True,
-            ),
             auto_open_folder_on_save=True,
-            confirm_before_external_link=True,
             disable_context_menu=True,
             print_handler=PrintHandler.QT_DIALOG,
             sidebar_visible=False,
@@ -438,18 +423,15 @@ class ConfigPresets:
                 bookmark_enabled=False,
                 scroll_mode_buttons=True,
                 spread_mode_buttons=False,
+                unsaved_changes_action="disabled",  # No user interaction for prompts
             ),
             security=PDFSecurityConfig(
                 allow_external_links=False,
+                confirm_before_external_link=True,
                 block_remote_content=True,
                 allowed_protocols=[],
             ),
-            stability=PDFStabilityConfig(
-                safer_mode=True,
-                use_isolated_profile=True,
-            ),
             auto_open_folder_on_save=False,
-            confirm_before_external_link=True,
             disable_context_menu=True,
             print_handler=PrintHandler.SYSTEM,
             sidebar_visible=False,
@@ -487,30 +469,15 @@ class ConfigPresets:
                 bookmark_enabled=False,
                 scroll_mode_buttons=False,
                 spread_mode_buttons=False,
+                unsaved_changes_action="prompt",  # Prevent data loss
             ),
             security=PDFSecurityConfig(
                 allow_external_links=False,
+                confirm_before_external_link=True,
                 block_remote_content=True,
                 allowed_protocols=[],
             ),
-            stability=PDFStabilityConfig(
-                safer_mode=True,
-                use_isolated_profile=True,
-                disable_webgl=True,
-                disable_gpu=True,
-                disable_gpu_compositing=True,
-                disable_cache=True,
-                disable_local_storage=True,
-                disable_session_storage=True,
-                disable_databases=True,
-                disable_service_workers=True,
-                disable_background_networking=True,
-                disable_software_rasterizer=False,
-                force_prefers_reduced_motion=True,
-                max_cache_size_mb=0,
-            ),
             auto_open_folder_on_save=True,
-            confirm_before_external_link=True,
             disable_context_menu=True,
             print_handler=PrintHandler.SYSTEM,
             sidebar_visible=False,
@@ -549,6 +516,7 @@ class ConfigPresets:
                 bookmark_enabled=True,
                 scroll_mode_buttons=True,
                 spread_mode_buttons=True,
+                unsaved_changes_action="disabled",  # Backwards compatible
             )
         )
 
@@ -623,8 +591,6 @@ class ConfigPresets:
                 obj = config.features
             elif category == "security":
                 obj = config.security
-            elif category == "stability":
-                obj = config.stability
             elif category in dir(config):
                 # Direct config attribute
                 for key, value in settings.items():
@@ -633,7 +599,7 @@ class ConfigPresets:
             else:
                 raise ValueError(
                     f"Unknown config category '{category}'. "
-                    f"Valid: features, security, stability, or config attributes"
+                    f"Valid: features, security, or config attributes"
                 )
 
             # Apply settings to category

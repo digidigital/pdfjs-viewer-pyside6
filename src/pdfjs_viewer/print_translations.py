@@ -55,6 +55,7 @@ TRANSLATIONS = {
         'print_timeout': 'Print operation timed out',
         'print_process_failed': 'Print process failed to start',
         'print_sending': 'Sending data to printer...',
+        'rendering_page': 'Rendering page {current} of {total}...',
     },
     'de': {  # German
         'dialog_title': 'Drucken',
@@ -103,6 +104,7 @@ TRANSLATIONS = {
         'print_timeout': 'Druckvorgang hat die Zeitüberschreitung überschritten',
         'print_process_failed': 'Druckprozess konnte nicht gestartet werden',
         'print_sending': 'Sende Daten an Drucker...',
+        'rendering_page': 'Rendere Seite {current} von {total}...',
     },
     'fr': {  # French
         'dialog_title': 'Imprimer',
@@ -151,6 +153,7 @@ TRANSLATIONS = {
         'print_timeout': 'L\'opération d\'impression a expiré',
         'print_process_failed': 'Le processus d\'impression n\'a pas pu démarrer',
         'print_sending': 'Envoi des données à l\'imprimante...',
+        'rendering_page': 'Rendu de la page {current} sur {total}...',
     },
     'es': {  # Spanish
         'dialog_title': 'Imprimir',
@@ -199,6 +202,7 @@ TRANSLATIONS = {
         'print_timeout': 'La operación de impresión ha agotado el tiempo de espera',
         'print_process_failed': 'El proceso de impresión no pudo iniciarse',
         'print_sending': 'Enviando datos a la impresora...',
+        'rendering_page': 'Renderizando página {current} de {total}...',
     },
     'it': {  # Italian
         'dialog_title': 'Stampa',
@@ -247,6 +251,7 @@ TRANSLATIONS = {
         'print_timeout': 'L\'operazione di stampa è scaduta',
         'print_process_failed': 'Il processo di stampa non è riuscito ad avviarsi',
         'print_sending': 'Invio dati alla stampante...',
+        'rendering_page': 'Rendering pagina {current} di {total}...',
     },
     'pt': {  # Portuguese
         'dialog_title': 'Imprimir',
@@ -295,6 +300,7 @@ TRANSLATIONS = {
         'print_timeout': 'A operação de impressão expirou',
         'print_process_failed': 'O processo de impressão falhou ao iniciar',
         'print_sending': 'Enviando dados para a impressora...',
+        'rendering_page': 'Renderizando página {current} de {total}...',
     },
     'nl': {  # Dutch
         'dialog_title': 'Afdrukken',
@@ -343,6 +349,7 @@ TRANSLATIONS = {
         'print_timeout': 'De afdrukbewerking is verlopen',
         'print_process_failed': 'Het afdrukproces kon niet worden gestart',
         'print_sending': 'Gegevens verzenden naar printer...',
+        'rendering_page': 'Pagina {current} van {total} renderen...',
     },
     'pl': {  # Polish
         'dialog_title': 'Drukuj',
@@ -391,6 +398,7 @@ TRANSLATIONS = {
         'print_timeout': 'Limit czasu operacji drukowania został przekroczony',
         'print_process_failed': 'Proces drukowania nie mógł się rozpocząć',
         'print_sending': 'Wysyłanie danych do drukarki...',
+        'rendering_page': 'Renderowanie strony {current} z {total}...',
     },
     'cs': {  # Czech
         'dialog_title': 'Tisk',
@@ -426,6 +434,7 @@ TRANSLATIONS = {
         'pdf_output_group': 'Výstup PDF',
         'save_to_label': 'Uložit do:',
         'specify_output_path': 'Prosím zadejte cestu k výstupnímu souboru.',
+        'rendering_page': 'Renderování stránky {current} z {total}...',
     },
     'sv': {  # Swedish
         'dialog_title': 'Skriv ut',
@@ -461,6 +470,7 @@ TRANSLATIONS = {
         'pdf_output_group': 'PDF-utdata',
         'save_to_label': 'Spara till:',
         'specify_output_path': 'Vänligen ange en utdatafilsökväg.',
+        'rendering_page': 'Renderar sida {current} av {total}...',
     },
     'da': {  # Danish
         'dialog_title': 'Udskriv',
@@ -496,6 +506,7 @@ TRANSLATIONS = {
         'pdf_output_group': 'PDF-output',
         'save_to_label': 'Gem til:',
         'specify_output_path': 'Angiv venligst en outputfilsti.',
+        'rendering_page': 'Renderer side {current} af {total}...',
     },
     'no': {  # Norwegian
         'dialog_title': 'Skriv ut',
@@ -531,6 +542,7 @@ TRANSLATIONS = {
         'pdf_output_group': 'PDF-utdata',
         'save_to_label': 'Lagre til:',
         'specify_output_path': 'Vennligst oppgi en utdatafilbane.',
+        'rendering_page': 'Gjengir side {current} av {total}...',
     },
     'fi': {  # Finnish
         'dialog_title': 'Tulosta',
@@ -566,6 +578,7 @@ TRANSLATIONS = {
         'pdf_output_group': 'PDF-tuloste',
         'save_to_label': 'Tallenna kohteeseen:',
         'specify_output_path': 'Anna tulostustiedoston polku.',
+        'rendering_page': 'Renderöidään sivu {current}/{total}...',
     },
     'el': {  # Greek
         'dialog_title': 'Εκτύπωση',
@@ -601,6 +614,7 @@ TRANSLATIONS = {
         'pdf_output_group': 'Έξοδος PDF',
         'save_to_label': 'Αποθήκευση σε:',
         'specify_output_path': 'Παρακαλώ καθορίστε μια διαδρομή αρχείου εξόδου.',
+        'rendering_page': 'Απόδοση σελίδας {current} από {total}...',
     },
     'uk': {  # Ukrainian
         'dialog_title': 'Друк',
@@ -636,6 +650,7 @@ TRANSLATIONS = {
         'pdf_output_group': 'Вивід PDF',
         'save_to_label': 'Зберегти в:',
         'specify_output_path': 'Будь ласка, вкажіть шлях до вихідного файлу.',
+        'rendering_page': 'Рендеринг сторінки {current} з {total}...',
     },
     'hi': {  # Hindi (Indian)
         'dialog_title': 'प्रिंट करें',
@@ -671,6 +686,7 @@ TRANSLATIONS = {
         'pdf_output_group': 'PDF आउटपुट',
         'save_to_label': 'इसमें सहेजें:',
         'specify_output_path': 'कृपया एक आउटपुट फ़ाइल पथ निर्दिष्ट करें।',
+        'rendering_page': 'पृष्ठ {current} का {total} रेंडर हो रहा है...',
     },
     'ro': {  # Romanian
         'dialog_title': 'Imprimare',
@@ -706,6 +722,7 @@ TRANSLATIONS = {
         'pdf_output_group': 'Ieșire PDF',
         'save_to_label': 'Salvare în:',
         'specify_output_path': 'Vă rugăm să specificați o cale a fișierului de ieșire.',
+        'rendering_page': 'Randare pagină {current} din {total}...',
     },
     'hu': {  # Hungarian
         'dialog_title': 'Nyomtatás',
@@ -741,6 +758,7 @@ TRANSLATIONS = {
         'pdf_output_group': 'PDF kimenet',
         'save_to_label': 'Mentés ide:',
         'specify_output_path': 'Kérjük, adjon meg egy kimeneti fájl elérési utat.',
+        'rendering_page': 'Renderelés: {current}. oldal / {total}...',
     },
     'bg': {  # Bulgarian
         'dialog_title': 'Печат',
@@ -776,6 +794,7 @@ TRANSLATIONS = {
         'pdf_output_group': 'PDF изход',
         'save_to_label': 'Запазване в:',
         'specify_output_path': 'Моля, посочете път на изходен файл.',
+        'rendering_page': 'Рендериране на страница {current} от {total}...',
     },
     'hr': {  # Croatian
         'dialog_title': 'Ispis',
@@ -811,6 +830,7 @@ TRANSLATIONS = {
         'pdf_output_group': 'PDF izlaz',
         'save_to_label': 'Spremi u:',
         'specify_output_path': 'Molimo navedite putanju izlazne datoteke.',
+        'rendering_page': 'Renderiranje stranice {current} od {total}...',
     },
 }
 

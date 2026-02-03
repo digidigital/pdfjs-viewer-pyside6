@@ -4,17 +4,21 @@ A production-ready, embeddable PDF viewer widget for PySide6 applications powere
 
 Visit [PDF.js Viewer for Qt](https://pdfjs-viewer.digidigital.de) homepage for more information.
 
+Support the project: [Buy me a pizza!](https://buymeacoffee.com/digidigital) 👍
+
 ## Features
 
 - 🖼️ **PDF.js Integration** - View, zoom, rotate, and navigate PDFs
-- ✏️ **Basic Annotations** - Highlight, draw, add text, stamps
-- 💾 **Save with Annotations** - Export PDFs with annotations
-- 🖨️ **Print Support** - Print annotated PDFs
+- ✏️ **Annotations** - Highlight, draw, add text, stamps
+- 💾 **Save with Annotations** - Export PDFs with baked-in annotations
+- 🖨️ **Print Support** - Multiple print handlers (system, Qt dialog, custom)
 - 🎨 **Theme Support** - Automatic light/dark mode following system preferences
 - 📄 **Blank Page Support** - Show empty viewer with `show_blank_page()`
 - ⚙️ **Viewer Options** - Control page, zoom, and sidebar when loading PDFs
-- 🔒 **Security** - Configurable security policies, suppress external links
+- 🔒 **Security** - Suppress external links
 - 🎛️ **Feature Control** - Enable/disable specific UI features
+- 💾 **Unsaved Changes Protection** - Prompt, auto-save, or ignore unsaved annotations
+- 🌍 **Localization** - 21+ languages for print and save dialogs
 - 📦 **PyInstaller Ready** - Automatic bundling for frozen applications
 - 🔧 **Customizable** - Use custom PDF.js versions
 - 🌐 **Cross-Platform** - Works on Windows, macOS, and Linux
@@ -24,10 +28,7 @@ Visit [PDF.js Viewer for Qt](https://pdfjs-viewer.digidigital.de) homepage for m
 ```bash
 pip install pdfjs-viewer-pyside6
 ```
-Optional dependencies for Qt print dialog:
-```bash
-pip install pdfjs-viewer-pyside6[qt-print]
-```
+
 ## Quick Start
 
 ```python
@@ -157,6 +158,8 @@ Main widget class for viewing PDFs.
 - `print_pdf()` - Trigger print dialog
 - `get_pdf_data() -> bytes` - Get current PDF data with annotations
 - `has_annotations() -> bool` - Check if PDF has been annotated
+- `has_unsaved_changes() -> bool` - Check if document has unsaved annotations
+- `handle_unsaved_changes() -> bool` - Handle unsaved changes per config
 - `goto_page(page: int)` - Navigate to specific page
 - `get_page_count() -> int` - Get total page count
 - `get_current_page() -> int` - Get current page number
@@ -177,25 +180,36 @@ All signals developers can listen to:
 
 ### Configuration Classes
 
+> **Note:** The default values shown below are the **class defaults** used when you instantiate these classes directly. When using `PDFViewerWidget()` without explicit configuration, the **annotation preset** is applied instead—see [Configuration Presets](#configuration-presets) for the actual default values.
+>
+> **Recommendation:** For most use cases, use the [hybrid approach](#method-2-hybrid-approach-recommended) documented under Configuration Presets. Start with a preset and modify only the settings you need. Working with these configuration classes directly is mainly useful for development or special cases.
+
 #### PDFFeatures
 
 Controls which UI features are enabled.
 
 ```python
 PDFFeatures(
+    # Core actions
     print_enabled: bool = True,
     save_enabled: bool = True,
     load_enabled: bool = True,
-    presentation_mode: bool = True,
+    presentation_mode: bool = False,
+
+    # Annotation tools
     highlight_enabled: bool = True,
     freetext_enabled: bool = True,
     ink_enabled: bool = True,
     stamp_enabled: bool = True,
-    signature_enabled: bool = True,
-    comment_enabled: bool = True,
-    find_enabled: bool = True,
-    zoom_enabled: bool = True,
-    rotation_enabled: bool = True,
+    stamp_alttext_enabled: bool = True,  # Enable alt-text dialog for stamps
+
+    # Navigation
+    bookmark_enabled: bool = False,
+    scroll_mode_buttons: bool = True,
+    spread_mode_buttons: bool = True,
+
+    # Unsaved changes behavior
+    unsaved_changes_action: str = "disabled",  # "disabled", "prompt", "auto_save"
 )
 ```
 
@@ -206,10 +220,10 @@ Security and privacy settings.
 ```python
 PDFSecurityConfig(
     allow_external_links: bool = False,
-    allow_javascript: bool = False,
+    confirm_before_external_link: bool = True,  # Show confirmation dialog before opening
     block_remote_content: bool = True,
-    sandbox_enabled: bool = True,
     allowed_protocols: List[str] = ["http", "https"],
+    custom_csp: str = None,  # Optional custom Content Security Policy
 )
 ```
 
@@ -221,8 +235,20 @@ Main configuration container.
 PDFViewerConfig(
     features: PDFFeatures = PDFFeatures(),
     security: PDFSecurityConfig = PDFSecurityConfig(),
+
+    # Behavior
     auto_open_folder_on_save: bool = True,
-    confirm_before_external_link: bool = True,
+    disable_context_menu: bool = True,
+
+    # Print handling
+    print_handler: PrintHandler = PrintHandler.SYSTEM,
+    print_dpi: int = 300,
+    print_fit_to_page: bool = True,
+
+    # PDF.js settings
+    default_zoom: str = "auto",
+    sidebar_visible: bool = False,
+    spread_mode: str = "none",  # "none", "odd", "even"
 )
 ```
 
@@ -257,8 +283,7 @@ Uses a basic Qt print dialog with pypdfium2 for PDF rendering. Requires pypdfium
 config = PDFViewerConfig(
     print_handler=PrintHandler.QT_DIALOG,
     print_dpi=300,              # DPI for rendering (default: 300)
-    print_fit_to_page=True,     # Scale to fit page (default: True)
-    print_parallel_pages=4       # Parallel rendering (default: 4)
+    print_fit_to_page=True      # Scale to fit page (default: True)
 )
 viewer = PDFViewerWidget(config=config)
 
@@ -313,8 +338,7 @@ Additional settings available for `QT_DIALOG` mode:
 config = PDFViewerConfig(
     print_handler=PrintHandler.QT_DIALOG,
     print_dpi=300,              # Rendering DPI (default: 300)
-    print_fit_to_page=True,     # Scale to fit vs actual size (default: True)
-    print_parallel_pages=4       # Pages to render in parallel (default: 4)
+    print_fit_to_page=True      # Scale to fit vs actual size (default: True)
 )
 ```
 
@@ -352,11 +376,13 @@ viewer = PDFViewerWidget(preset="simple")
 **Features:** Print, save, basic annotations (highlight, text)
 **Best for:** General PDF viewing, most common use case
 
-#### 3. annotation - Full Editing
-All annotation and editing tools enabled.
+#### 3. annotation - Full Editing (Default)
+All annotation and editing tools enabled. **This is the default preset when no configuration is specified.**
 
 ```python
 viewer = PDFViewerWidget(preset="annotation")
+# or simply
+viewer = PDFViewerWidget()  # annotation is the default
 ```
 
 **Features:** All annotation tools, file loading, external links
@@ -392,13 +418,11 @@ viewer = PDFViewerWidget(preset="safer")
 **Features:** Minimal features, all stability options enabled, basic viewing
 **Best for:** Embedded Linux, older Qt versions, mission-critical apps
 
-#### 7. unrestricted - Full PDF.js (Default)
+#### 7. unrestricted - Full PDF.js
 No restrictions, all features enabled.
 
 ```python
 viewer = PDFViewerWidget(preset="unrestricted")
-# or simply
-viewer = PDFViewerWidget()  # unrestricted is default
 ```
 
 **Features:** Everything enabled, developer-friendly
@@ -503,17 +527,7 @@ viewer = PDFViewerWidget(config=config)
 viewer.print_data_ready.connect(my_custom_print_handler)
 ```
 
-#### Example 3: Simple + Stability
-
-Basic viewer with maximum stability:
-
-```python
-config = ConfigPresets.simple()
-config.stability = ConfigPresets.safer().stability
-viewer = PDFViewerWidget(config=config)
-```
-
-#### Example 4: Custom Feature Mix
+#### Example 3: Custom Feature Mix
 
 Cherry-pick features from different presets:
 
@@ -540,20 +554,132 @@ viewer = PDFViewerWidget(config=config)
 
 ### Preset Configuration Reference
 
-Each preset configures three main areas:
+Each preset configures two main areas:
 
 1. **Features** (`PDFFeatures`) - Which UI elements are enabled
 2. **Security** (`PDFSecurityConfig`) - Link and content policies
-3. **Stability** (`PDFStabilityConfig`) - WebEngine stability settings
 
 See [Configuration Classes](#configuration-classes) section above for full details on available settings.
 
+## Unsaved Changes Handling
+
+The viewer can be configured to handle unsaved annotations when:
+- Closing the viewer
+- Loading a new PDF
+- Navigating away from the current document
+
+### Configuration
+
+Set the `unsaved_changes_action` in `PDFFeatures`:
+
+```python
+from pdfjs_viewer import PDFViewerWidget, ConfigPresets
+
+# Method 1: Using preset with customize
+viewer = PDFViewerWidget(
+    preset="annotation",
+    customize={"features": {"unsaved_changes_action": "prompt"}}
+)
+
+# Method 2: Modify config directly
+config = ConfigPresets.annotation()
+config.features.unsaved_changes_action = "prompt"
+viewer = PDFViewerWidget(config=config)
+```
+
+### Available Modes
+
+| Mode | Description | Behavior |
+|------|-------------|----------|
+| `"disabled"` | No warning (default) | Changes may be lost without prompting |
+| `"prompt"` | Show dialog | User chooses: Save As / Save / Discard |
+| `"auto_save"` | Auto-save | Automatically saves to original file |
+
+### Dialog Options (prompt mode)
+
+When `unsaved_changes_action="prompt"`, a dialog appears with three options:
+
+- **Save As...** - Opens file picker to choose save location
+- **Save** - Overwrites the original PDF file with annotations
+- **Discard** - Discards changes and continues without saving
+
+### Preset Defaults
+
+| Preset | Default Action |
+|--------|---------------|
+| `readonly` | `disabled` (no editing possible) |
+| `simple` | `prompt` |
+| `annotation` | `prompt` |
+| `form` | `prompt` |
+| `kiosk` | `disabled` (no user interaction) |
+| `safer` | `prompt` |
+| `unrestricted` | `disabled` (backwards compatible) |
+
+### Programmatic Checking
+
+You can check and handle unsaved changes programmatically:
+
+```python
+# Check if there are unsaved changes
+if viewer.has_unsaved_changes():
+    print("Document has unsaved annotations")
+
+# Handle unsaved changes according to config
+# Returns True if safe to proceed, False if user cancelled Save As
+if viewer.handle_unsaved_changes():
+    # Safe to close or navigate
+    pass
+```
+
+### Translations
+
+The dialog is translated in 21 languages, matching the print dialog translations.
+
+## Global Stability Settings
+
+For maximum stability, configure WebEngine settings **before** creating QApplication:
+
+```python
+from pdfjs_viewer.stability import configure_global_stability
+
+# Call BEFORE QApplication creation
+configure_global_stability(
+    disable_gpu=True,
+    disable_webgl=True,
+    disable_gpu_compositing=True,
+    disable_unnecessary_features=True,
+)
+
+# Then create your application
+app = QApplication(sys.argv)
+```
+
+## Utility Functions
+
+### validate_pdf_file
+
+Check if a file is actually a PDF before loading:
+
+```python
+from pdfjs_viewer import validate_pdf_file
+
+if validate_pdf_file("/path/to/file.pdf"):
+    viewer.load_pdf("/path/to/file.pdf")
+else:
+    print("Not a valid PDF file")
+```
+
 ## Examples
 
-See [examples/](examples/) directory for complete examples:
+See [examples/](https://github.com/digidigital/pdfjs-viewer-pyside6/examples/) directory for complete examples:
 
-- [basic_viewer.py](examples/basic_viewer.py) - Simple PDF viewer
-- [feature_control.py](examples/feature_control.py) - Disabling features
+- [basic_viewer.py](https://github.com/digidigital/pdfjs-viewer-pyside6/examples/basic_viewer.py) - Simple PDF viewer
+- [feature_control.py](https://github.com/digidigital/pdfjs-viewer-pyside6/examples/feature_control.py) - Static feature configuration
+- [feature_selection.py](https://github.com/digidigital/pdfjs-viewer-pyside6/examples/feature_selection.py) - Interactive feature demo
+- [print_handlers.py](https://github.com/digidigital/pdfjs-viewer-pyside6/examples/print_handlers.py) - All print handler modes
+- [unsaved_changes_demo.py](https://github.com/digidigital/pdfjs-viewer-pyside6/examples/unsaved_changes_demo.py) - Unsaved changes handling
+- [external_link_handler.py](https://github.com/digidigital/pdfjs-viewer-pyside6/examples/external_link_handler.py) - Link security handling
+- [viewer_options.py](https://github.com/digidigital/pdfjs-viewer-pyside6/examples/viewer_options.py) - Page, zoom, sidebar options
 
 ## PyInstaller Support
 
@@ -570,9 +696,13 @@ dist/your_app/
 
 ## Requirements
 
-- Python >= 3.8
-- PySide6 >= 6.10.0
-- PySide6-WebEngine >= 6.10.0
+- Python >= 3.10
+- PySide6 >= 6.10.0 (excluding 6.10.1 due to a bug)
+- PySide6-Addons >= 6.10.0
+- PySide6-Essentials >= 6.10.0
+- pypdfium2
+- Pillow
+- pikepdf
 
 ## PDF.js Version
 
@@ -582,7 +712,7 @@ This package bundles PDF.js version **5.4.530** (Apache License 2.0).
 
 This package is licensed under the **GNU Lesser General Public License v3.0 or later (LGPL-3.0-or-later)**.
 
-See [LICENSE](LICENSE) for the full license text.
+See [LICENSE](https://github.com/digidigital/pdfjs-viewer-pyside6/LICENSE) for the full license text.
 
 ### PySide6 LGPL Notice
 
@@ -592,7 +722,7 @@ This module uses **PySide6 (Qt for Python), licensed under the LGPL v3**.
 - You may use this module in proprietary applications
 - PySide6 and Qt libraries must remain as external shared libraries (not statically linked)
 - Users must be able to replace the PySide6/Qt libraries
-- See [LICENSE_NOTICE.md](LICENSE_NOTICE.md) for full compliance details
+- See [LICENSE_NOTICE.md](https://github.com/digidigital/pdfjs-viewer-pyside6/LICENSE_NOTICE.md) for full compliance details
 
 ### Bundled Dependencies
 
@@ -608,10 +738,46 @@ Contributions are welcome! Please open an issue or pull request on GitHub.
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/digidigitsl/pdfjs-viewer-pyside6/issues)
+- **Issues**: [GitHub Issues](https://github.com/digidigital/pdfjs-viewer-pyside6/issues)
 - **Documentation**: Full API documentation available in source code
 
 ## Changelog
+
+### v1.1.0 (2026-02-02)
+
+#### New Features
+- **Unsaved Changes Protection**: New `unsaved_changes_action` setting with three modes:
+  - `"disabled"` - No prompts (default, backwards compatible)
+  - `"prompt"` - Dialog with Save As / Save / Discard options
+  - `"auto_save"` - Automatic save before navigation
+- **Global Stability Configuration**: New `stability.configure_global_stability()` for crash prevention
+- **PDF Validation**: New `validate_pdf_file()` utility function
+- **Stamp Alt-Text Control**: New `stamp_alttext_enabled` to disable alt-text dialog
+- **View Mode Controls**: New `scroll_mode_buttons` and `spread_mode_buttons` features
+- **Bookmark Toggle**: New `bookmark_enabled` feature flag
+- **Separate Process Printing**: Print dialog now runs in isolated process for stability
+
+#### Improvements
+- Sequential PDF page rendering for better memory management
+- Print dialog translations in 21+ languages
+- Unsaved changes dialog translations in 21+ languages
+- Improved home directory detection for Snap packages
+- Better error handling with specific exception types
+- Resource cleanup with context managers
+
+#### Breaking Changes
+- `PDFStabilityConfig` removed — safe defaults are now always applied internally. Use `configure_global_stability()` for Chromium flags.
+- `confirm_before_external_link` moved from `PDFViewerConfig` to `PDFSecurityConfig`
+- `print_parallel_pages` is deprecated and ignored (printing is now sequential)
+- `signature_enabled` and `comment_enabled` removed (not exposed in PDF.js UI)
+- `presentation_mode` now defaults to `False`
+- `allow_javascript` and `sandbox_enabled` removed from `PDFSecurityConfig` (controlled globally)
+
+#### Bug Fixes
+- Fixed memory leaks in PDF rendering
+- Fixed bare except clauses throughout codebase
+- Fixed resource leaks with pikepdf
+- Fixed subprocess error handling for system PDF viewer
 
 ### v1.0.0 (2026-01-12)
 
@@ -619,8 +785,8 @@ Contributions are welcome! Please open an issue or pull request on GitHub.
 - PDF.js 5.4.530 integration
 - Annotation support (highlight, text, ink, stamp)
 - Save/print with annotations
-- **Light/dark mode synchronization**
-- **`show_blank_page()` function for empty viewer**
+- Light/dark mode synchronization
+- `show_blank_page()` function for empty viewer
 - Configurable feature control
 - Security settings and sandbox
-- **PyInstaller support (>= 5.0 with `_internal` directory)**
+- PyInstaller support (>= 5.0 with `_internal` directory)

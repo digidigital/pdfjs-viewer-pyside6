@@ -2,6 +2,8 @@
 
 This directory contains examples demonstrating various features and use cases of the `pdfjs-viewer-pyside6` package.
 
+Support the project: [Buy me a pizza!](https://buymeacoffee.com/digidigital) 👍
+
 ## Quick Start Examples
 
 ### [basic_viewer.py](basic_viewer.py)
@@ -63,37 +65,31 @@ Print handler options:
 - Shows how to intercept and handle link clicks
 - Custom URL validation and user confirmation dialogs
 
+## Unsaved Changes Handling
+
+### [unsaved_changes_demo.py](unsaved_changes_demo.py)
+**Unsaved changes protection demo**
+- Shows all three modes: disabled, prompt, auto_save
+- Interactive mode switching
+- Demonstrates `has_unsaved_changes()` and `handle_unsaved_changes()` methods
+- **Essential for production applications**
+
+## Viewer Options
+
+### [viewer_options.py](viewer_options.py)
+**PDF loading options demo**
+- Open at specific page
+- Set zoom level (named or percentage)
+- Control sidebar visibility (pagemode)
+- Navigate to named destinations
+
 ## Document Viewer Patterns
 
 ### [generic_document_viewer.py](generic_document_viewer.py)
-**Full document viewer application pattern**
-- Menu bar, toolbar, status bar
-- File operations (open, save, recent files)
-- Page navigation controls
-- Zoom controls
-- Example of a complete document viewing application
-
-## Stability & Crash Prevention
-
-### [stability_demo.py](stability_demo.py)
-**Stability configuration examples**
-- Shows PDFStabilityConfig options
-- Demonstrates crash prevention settings
-- Useful for embedded environments or older systems
-
-### [ultra_stability_example.py](ultra_stability_example.py)
-**Maximum stability configuration**
-- All stability features enabled
-- Optimized for reliability over features
-- Use when crashes are a concern
-
-## Testing (Not Production Examples)
-
-### [test_alttext_dialog_crash.py](test_alttext_dialog_crash.py)
-**Test file for alt-text dialog crashes in Qt 6.10.1** - NOT A PRODUCTION EXAMPLE
-- Used for testing alt-text dialog behavior
-- Demonstrates crash scenarios and fixes
-- For development/testing purposes only
+**Multi-format document viewer**
+- Demonstrates reusing QWebEngineView for HTML, XML, text, images
+- Shows how to switch between PDF.js and direct web rendering
+- Example of a versatile document preview application
 
 ## Running the Examples
 
@@ -117,8 +113,9 @@ Some examples expect PDF files. You can:
 - **Want to explore features?** → `feature_selection.py`
 - **Need to understand a specific feature?** → `feature_control.py` (as template)
 - **Need printing?** → `print_handlers.py`
+- **Need unsaved changes protection?** → `unsaved_changes_demo.py`
+- **Need page/zoom control?** → `viewer_options.py`
 - **Building a document viewer app?** → `generic_document_viewer.py`
-- **Having stability issues?** → `stability_demo.py` or `ultra_stability_example.py`
 - **Dealing with external links?** → `external_link_handler.py`
 
 ## Development Tips
@@ -161,6 +158,46 @@ viewer = PDFViewerWidget(config=config)
 viewer.pdf_loaded.connect(lambda meta: print(f"Loaded: {meta['filename']}"))
 viewer.pdf_saved.connect(lambda data, path: print(f"Saved to: {path}"))
 viewer.error_occurred.connect(lambda msg: print(f"Error: {msg}"))
+```
+
+### Using Presets
+
+```python
+from pdfjs_viewer import PDFViewerWidget
+
+# Use a preset directly
+viewer = PDFViewerWidget(preset="annotation")
+
+# Customize a preset
+viewer = PDFViewerWidget(
+    preset="simple",
+    customize={"features": {"ink_enabled": True}}
+)
+```
+
+### Handling Unsaved Changes
+
+```python
+from pdfjs_viewer import PDFViewerWidget, ConfigPresets
+
+# Enable unsaved changes protection
+config = ConfigPresets.annotation()
+config.features.unsaved_changes_action = "prompt"
+viewer = PDFViewerWidget(config=config)
+
+# Check before closing
+if viewer.has_unsaved_changes():
+    viewer.handle_unsaved_changes()  # Shows dialog
+```
+
+### Loading with Options
+
+```python
+# Open at page 5 with page-width zoom
+viewer.load_pdf("document.pdf", page=5, zoom="page-width")
+
+# Open with bookmarks sidebar
+viewer.load_pdf("document.pdf", pagemode="bookmarks")
 ```
 
 ## Need More Help?

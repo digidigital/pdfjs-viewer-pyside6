@@ -174,7 +174,7 @@ class ViewerOptionsDemo(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select PDF File",
-            "",
+            str(Path.home()),
             "PDF Files (*.pdf);;All Files (*)"
         )
 

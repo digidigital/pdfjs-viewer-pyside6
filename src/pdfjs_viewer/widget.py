@@ -63,7 +63,7 @@ class PDFViewerWidget(QWidget):
         Configuration Priority (highest to lowest):
             1. config parameter (if provided, preset/customize ignored)
             2. preset + customize
-            3. unrestricted preset (default)
+            3. annotation preset (default)
 
         Examples:
             Simple preset usage:
@@ -103,8 +103,8 @@ class PDFViewerWidget(QWidget):
                 else:
                     config = ConfigPresets.get(preset)
             else:
-                # Default: unrestricted preset
-                config = ConfigPresets.unrestricted()
+                # Default: annotation preset
+                config = ConfigPresets.annotation()
 
         # Create in-process backend
         self.backend = InProcessBackend(self)
@@ -321,12 +321,69 @@ class PDFViewerWidget(QWidget):
         """
         return self.backend.resource_manager.get_pdfjs_version()
 
+    def has_unsaved_changes(self) -> bool:
+        """Check if document has unsaved annotations.
+
+        This checks PDF.js's internal modification tracking, which is:
+        - Set to true when annotations are modified
+        - Reset to false after saveDocument() completes
+
+        Returns:
+            True if there are unsaved changes, False otherwise.
+
+        Example:
+            >>> if viewer.has_unsaved_changes():
+            ...     print("Document has unsaved annotations")
+        """
+        return self.backend.has_unsaved_changes()
+
+    def handle_unsaved_changes(self) -> bool:
+        """Handle unsaved changes according to config.
+
+        Based on the unsaved_changes_action configuration:
+        - "disabled": Returns True immediately (no prompt)
+        - "prompt": Shows dialog with Save As / Save / Discard options
+        - "auto_save": Automatically saves to original file
+
+        The save operation is asynchronous: if a save is needed, this method
+        triggers PDFViewerApplication.download() in JavaScript and returns
+        False. The actual file write happens when the data arrives via the
+        bridge's save_requested signal. After saving, the deferred action
+        (close, load) is executed automatically.
+
+        Returns:
+            True if safe to proceed immediately (no changes, discarded, disabled).
+            False if async save was triggered or Save As was cancelled — caller
+            should NOT proceed (e.g., ignore the close event).
+
+        Example:
+            >>> # In closeEvent:
+            >>> if not viewer.handle_unsaved_changes():
+            ...     event.ignore()  # Save in progress or cancelled
+            ...     return
+        """
+        return self.backend.handle_unsaved_changes()
+
     def closeEvent(self, event):
         """Handle widget close event.
+
+        If unsaved_changes_action is configured, checks for unsaved annotations
+        and prompts the user before closing.
+
+        When an async save is triggered, this method ignores the close event.
+        After the save completes, the backend re-triggers close automatically,
+        and on the second call has_unsaved_changes() returns False, allowing
+        the close to proceed.
 
         Args:
             event: Close event.
         """
+        # Handle unsaved changes before closing
+        # Returns False if async save was triggered or Save As cancelled
+        if not self.backend.handle_unsaved_changes():
+            event.ignore()
+            return
+
         # Use enhanced shutdown sequence if available
         if hasattr(self.backend, '_cleanup_before_shutdown'):
             self.backend._cleanup_before_shutdown()

@@ -24,7 +24,6 @@ def configure_global_stability(
     IMPORTANT: Must be called BEFORE creating QApplication instance.
 
     These settings apply globally to all QWebEngine instances in the application.
-    For per-viewer settings, use PDFStabilityConfig instead.
 
     Args:
         disable_gpu: Disable GPU acceleration (recommended for stability)
@@ -155,97 +154,6 @@ def apply_environment_stability():
         existing_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
         if "--no-sandbox" not in existing_flags:
             os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = f"{existing_flags} --no-sandbox".strip()
-
-
-def get_recommended_stability_config():
-    """Get recommended stability configuration for production use.
-
-    Returns:
-        dict: Configuration dict suitable for PDFStabilityConfig
-    """
-    return {
-        "use_isolated_profile": True,
-        "disable_webgl": True,
-        "disable_gpu": True,
-        "disable_gpu_compositing": True,
-        "disable_cache": True,
-        "disable_local_storage": True,
-        "disable_service_workers": True,
-        "disable_background_networking": True,
-        "safer_mode": True,
-    }
-
-
-def get_maximum_stability_config():
-    """Get maximum stability configuration (most restrictive).
-
-    This configuration disables all non-essential features for maximum stability.
-    Use when crashes are frequent or in production environments.
-
-    Returns:
-        dict: Configuration dict suitable for PDFStabilityConfig
-    """
-    return {
-        "use_isolated_profile": True,
-        "disable_webgl": True,
-        "disable_gpu": True,
-        "disable_gpu_compositing": True,
-        "disable_cache": True,
-        "disable_local_storage": True,
-        "disable_session_storage": True,
-        "disable_databases": True,
-        "disable_service_workers": True,
-        "disable_background_networking": True,
-        "disable_software_rasterizer": False,  # Keep software rendering
-        "max_cache_size_mb": 0,
-        "safer_mode": True,
-    }
-
-
-def get_ultra_stability_chromium_flags() -> List[str]:
-    """Get comprehensive list of stability-focused Chromium flags.
-
-    This returns an extensive list of flags that disable features not needed
-    for PDF viewing. These can be passed to configure_global_stability() via
-    the extra_args parameter for maximum stability.
-
-    Returns:
-        List of Chromium command line flags
-
-    Example:
-        >>> from pdfjs_viewer.stability import configure_global_stability, get_ultra_stability_chromium_flags
-        >>> configure_global_stability(extra_args=get_ultra_stability_chromium_flags())
-    """
-    return [
-        # Additional GPU/rendering flags
-        "--disable-accelerated-video-decode",
-        "--disable-accelerated-video-encode",
-
-        # Additional network flags
-        "--disable-background-timer-throttling",
-        "--disable-client-side-phishing-detection",
-        "--disable-prompt-on-repost",
-        "--no-referrers",
-
-        # Additional storage flags
-        "--disable-file-system",
-        "--disable-shared-workers",
-
-        # Additional UI flags
-        "--disable-permissions-api",
-        "--disable-popup-blocking",
-        "--disable-touch-drag-drop",
-        "--disable-touch-adjustment",
-        "--disable-overscroll-edge-effect",
-
-        # Additional security/hardening flags
-        "--disable-renderer-backgrounding",
-        "--disable-ipc-flooding-protection",
-
-        # Disable feature groups
-        "--disable-features=AutofillServerCommunication,InterestFeedContentSuggestions,"
-        "OptimizationHints,AudioServiceOutOfProcess",
-    ]
 
 
 def print_stability_info():

@@ -8,23 +8,93 @@ import json
 import os
 import platform
 import subprocess
+import sys
 from pathlib import Path
 from typing import Optional, Union
 
-from PySide6.QtCore import QUrl, QUrlQuery
+from PySide6.QtCore import QUrl, QUrlQuery, QTimer
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QProgressDialog, QMessageBox, QFileDialog
+from PySide6.QtWidgets import QMessageBox, QFileDialog
 
 from .viewer_backend import ViewerBackend, register_backend
 from .bridge import PDFJavaScriptBridge
 from .config import PDFViewerConfig, PrintHandler
-from .print_utils import get_temp_file_manager, PrintWorker
+from .print_utils import get_temp_file_manager
 from .print_manager import PrintManager
 from .resources import PDFResourceManager
 from .security import PDFSecurityManager
 from .ui_translations import get_translations
 from .print_translations import get_translation
+from .unsaved_changes_dialog import UnsavedChangesDialog
+from .annotation_tracker import AnnotationStateTracker
+
+
+def _get_real_home_directory() -> str:
+    """Get the user's real home directory, handling snap confinement.
+
+    In snap packages, Path.home() returns the snap's confined home directory
+    (e.g., ~/snap/appname/current). This function returns the actual user
+    home directory by checking SNAP_REAL_HOME environment variable first.
+
+    Returns:
+        Path to the user's real home directory.
+    """
+    # Check for snap's real home environment variable
+    snap_real_home = os.environ.get('SNAP_REAL_HOME')
+    if snap_real_home:
+        return snap_real_home
+
+    # Fall back to standard home directory (works on all platforms)
+    return str(Path.home())
+
+
+def _get_clean_subprocess_env():
+    """Get a clean environment for spawning system subprocesses.
+
+    PyInstaller injects LD_LIBRARY_PATH (Linux) and DYLD_LIBRARY_PATH /
+    DYLD_FRAMEWORK_PATH (macOS) pointing to its bundled libraries.  Child
+    processes such as xdg-open or open inherit these variables, which can
+    cause the system PDF viewer to load incompatible libraries and fail.
+
+    PyInstaller stores the original values as ``*_ORIG`` environment
+    variables.  This function restores them so that child processes see
+    the user's original library paths.
+
+    Returns:
+        A cleaned copy of ``os.environ``, or ``None`` if no cleaning is
+        needed (unfrozen environment or Windows).
+    """
+    if not getattr(sys, 'frozen', False):
+        return None
+
+    system = platform.system()
+    if system == 'Windows':
+        return None
+
+    env = os.environ.copy()
+
+    if system == 'Linux':
+        vars_to_clean = ['LD_LIBRARY_PATH']
+    elif system == 'Darwin':
+        vars_to_clean = ['DYLD_LIBRARY_PATH', 'DYLD_FRAMEWORK_PATH']
+    else:
+        return None
+
+    for var in vars_to_clean:
+        orig_key = f'{var}_ORIG'
+        if orig_key in env:
+            orig_value = env[orig_key]
+            if orig_value:
+                env[var] = orig_value
+            else:
+                env.pop(var, None)
+            env.pop(orig_key, None)
+        elif var in env:
+            # No _ORIG means it was not set before PyInstaller — remove
+            env.pop(var, None)
+
+    return env
 
 
 class CustomWebEngineView(QWebEngineView):
@@ -80,12 +150,21 @@ class InProcessBackend(ViewerBackend):
 
         self._current_pdf_url: Optional[str] = None
         self._current_pdf_directory: Optional[str] = None  # Directory of loaded PDF
-        self._has_annotations = False
-        self._last_print_data: Optional[bytes] = None
 
         # Temporary file management for performance
         self._temp_pdf_path: Optional[Path] = None  # Temp copy of PDF
         self._original_pdf_path: Optional[Path] = None  # Original PDF location
+        self._load_in_progress = False  # Reentrancy guard for load operations
+
+        # Async save state: instead of blocking the main thread waiting for JS
+        # to produce PDF data, we trigger PDFViewerApplication.download() and
+        # let the bridge's save_requested signal deliver the data asynchronously.
+        # _save_mode controls how _on_save_requested routes the incoming data.
+        self._save_mode = 'normal'  # 'normal' | 'auto_save' | 'save_as' | 'print'
+        self._save_target: Optional[Path] = None  # Target path for auto_save
+        self._pending_load: Optional[dict] = None  # Deferred load_pdf params
+        self._close_deferred = False  # Whether close is waiting for async save
+        self._save_timeout_timer = None  # QTimer for async save timeout
 
         # Print manager for separate process printing
         self._print_manager: Optional[PrintManager] = None
@@ -95,6 +174,9 @@ class InProcessBackend(ViewerBackend):
         self._total_pages: int = 0
         self._pdf_metadata: Optional[dict] = None
         self._is_recovering_from_crash: bool = False
+
+        # Qt-side annotation state tracking (independent of PDF.js internals)
+        self._annotation_tracker = AnnotationStateTracker(self)
 
     def initialize(self, config: PDFViewerConfig, pdfjs_path: Optional[str] = None):
         """Initialize the backend with configuration.
@@ -122,39 +204,17 @@ class InProcessBackend(ViewerBackend):
         self._load_viewer()
 
     def _setup_web_view(self):
-        """Setup the QWebEngineView with stability configuration."""
+        """Setup the QWebEngineView with safe stability defaults."""
         from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings
         import uuid
 
-        # Apply safer_mode preset if enabled
-        stability = self.config.stability
-        if stability.safer_mode:
-            # Override with safe defaults
-            stability.use_isolated_profile = True
-            stability.disable_webgl = True
-            stability.disable_gpu = True
-            stability.disable_cache = True
-            stability.disable_local_storage = True
-            stability.disable_service_workers = True
+        # Always create isolated profile with unique name for stability
+        profile_name = f"pdfjs_viewer_{uuid.uuid4().hex[:8]}"
+        profile = QWebEngineProfile(profile_name, self.parent())
 
-        # Create or get profile
-        if stability.use_isolated_profile:
-            # Create isolated profile with unique name
-            profile_name = stability.profile_name or f"pdfjs_viewer_{uuid.uuid4().hex[:8]}"
-            profile = QWebEngineProfile(profile_name, self.parent())
-
-            # Configure profile cache
-            if stability.disable_cache:
-                profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
-            if stability.max_cache_size_mb > 0:
-                profile.setHttpCacheMaximumSize(stability.max_cache_size_mb * 1024 * 1024)
-
-            # Configure persistent data
-            if stability.disable_local_storage or stability.disable_session_storage or stability.disable_databases:
-                profile.setPersistentStoragePath("")  # Disable persistent storage
-        else:
-            # Use default profile
-            profile = QWebEngineProfile.defaultProfile()
+        # Disable cache and persistent storage
+        profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
+        profile.setPersistentStoragePath("")
 
         # Create secure page with profile
         secure_page = self.security_manager.create_page(profile=profile, parent=self.parent())
@@ -167,14 +227,9 @@ class InProcessBackend(ViewerBackend):
         settings = secure_page.settings()
 
         # Disable crash-prone features
-        if stability.disable_webgl:
-            settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, False)
-            settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, False)
-
-        if stability.disable_local_storage:
-            settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, False)
-
-        # Additional stability settings
+        settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, False)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, False)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, False)
         settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, False)
         settings.setAttribute(QWebEngineSettings.WebAttribute.AutoLoadIconsForPage, False)
 
@@ -195,12 +250,18 @@ class InProcessBackend(ViewerBackend):
         # Connect bridge signals to backend signals
         self.bridge.save_requested.connect(self._on_save_requested)
         self.bridge.print_requested.connect(self._on_print_requested)
+        self.bridge.print_pdf_requested.connect(self._on_print_pdf_requested)
         self.bridge.load_requested.connect(self._on_load_requested)
+        self.bridge.open_pdf_requested.connect(self._on_open_pdf_requested)
         self.bridge.pdf_loaded.connect(self._on_pdf_loaded)
         self.bridge.annotation_changed.connect(self._on_annotation_changed)
         self.bridge.page_changed.connect(self._on_page_changed)
         self.bridge.error_occurred.connect(self._on_error_occurred)
         self.bridge.text_copied.connect(self._on_text_copied)
+        self.bridge.save_started.connect(self._on_save_started)
+
+        # Connect annotation tracking - mark tracker as modified when JS reports changes
+        self.bridge.annotation_changed.connect(self._annotation_tracker.mark_modified)
 
         # Setup web channel
         self.channel = QWebChannel(self.web_view.page())
@@ -393,9 +454,9 @@ class InProcessBackend(ViewerBackend):
         # Build query using QUrlQuery for proper encoding
         query = QUrlQuery()
         query.addQueryItem('file', pdf_url.toString())
-        
+
         fragments = []
-        
+
         if page is not None:
             fragments.append(f'page={str(page)}')
 
@@ -404,7 +465,7 @@ class InProcessBackend(ViewerBackend):
 
         if pagemode is not None:
             fragments.append(f'pagemode={str(pagemode)}')
- 
+
         if nameddest is not None:
             fragments.append(f'nameddest={str(nameddest)}')
 
@@ -432,6 +493,9 @@ class InProcessBackend(ViewerBackend):
         Uses the standard PDF.js approach: reload viewer.html with query parameters.
         This is more reliable than JavaScript injection.
 
+        If the current document has unsaved changes and unsaved_changes_action is
+        configured, the user will be prompted before loading the new PDF.
+
         Args:
             file_path: Absolute path to the PDF file
             page: Page number to open (1-indexed, e.g., page=1 opens first page)
@@ -456,13 +520,60 @@ class InProcessBackend(ViewerBackend):
             Open PDF at 150% zoom:
             >>> backend.load_pdf("document.pdf", zoom=150)
         """
+        # Reentrancy guard: prevents double-loading when multiple signals
+        # (e.g. clicked + selectionChanged) fire for the same user action.
+        if self._load_in_progress:
+            return
+
+        # If an async save is already in progress, replace the pending load
+        # with this newer request (last-write-wins). The save will complete
+        # and then load this file instead of the previously pending one.
+        if self._save_mode != 'normal':
+            self._pending_load = {
+                'type': 'load_pdf', 'file_path': file_path,
+                'page': page, 'zoom': zoom,
+                'pagemode': pagemode, 'nameddest': nameddest
+            }
+            return
+
+        self._load_in_progress = True
+        try:
+            # Handle unsaved changes — may trigger async save and defer this load
+            result = self._handle_unsaved_before_action(
+                pending_action={'type': 'load_pdf', 'file_path': file_path,
+                                'page': page, 'zoom': zoom,
+                                'pagemode': pagemode, 'nameddest': nameddest}
+            )
+            if result == 'deferred':
+                return  # Save in progress, load will happen when save completes
+            if result == 'cancelled':
+                return  # User cancelled Save As dialog
+
+            # No unsaved changes or user discarded — proceed immediately
+            self._execute_load_pdf(file_path, page, zoom, pagemode, nameddest)
+        finally:
+            self._load_in_progress = False
+
+    def _execute_load_pdf(
+        self,
+        file_path: str,
+        page: Optional[int] = None,
+        zoom: Optional[Union[str, int, float]] = None,
+        pagemode: Optional[str] = None,
+        nameddest: Optional[str] = None
+    ):
+        """Execute the actual PDF loading (no unsaved changes check).
+
+        This is the core loading logic, separated from load_pdf() so it can be
+        called both synchronously (no unsaved changes) and deferred (after async
+        save completes).
+        """
         from .config import validate_pdf_file
 
         path = Path(file_path)
 
         # Handle UNC paths on Windows
         if str(path).startswith('\\\\'):
-            # UNC path - convert to Path for validation
             path = Path(str(path))
 
         path = path.absolute()
@@ -496,7 +607,12 @@ class InProcessBackend(ViewerBackend):
             pdf_url = QUrl.fromLocalFile(str(path))
 
         self._current_pdf_url = pdf_url.toString()
-        self._has_annotations = False
+
+        # Reset annotation tracker for the new document
+        # Use file path hash as document identifier
+        import hashlib
+        doc_id = hashlib.md5(str(path).encode()).hexdigest()
+        self._annotation_tracker.set_document(doc_id)
 
         # Build viewer URL with PDF file and optional viewer options
         viewer_qurl = self._build_viewer_url(
@@ -523,6 +639,9 @@ class InProcessBackend(ViewerBackend):
 
         Creates a temporary file and loads it using the standard URL parameter approach.
 
+        If the current document has unsaved changes and unsaved_changes_action is
+        configured, the user will be prompted before loading the new PDF.
+
         Args:
             pdf_data: PDF file contents as bytes
             filename: Name to display for the document (stored for save dialog)
@@ -540,6 +659,46 @@ class InProcessBackend(ViewerBackend):
             >>> with open("doc.pdf", "rb") as f:
             ...     backend.load_pdf_bytes(f.read(), page=3, zoom="page-fit")
         """
+        # Same reentrancy guard as load_pdf (see comment there)
+        if self._load_in_progress:
+            return
+
+        # If async save in progress, replace pending load (last-write-wins)
+        if self._save_mode != 'normal':
+            self._pending_load = {
+                'type': 'load_pdf_bytes', 'pdf_data': pdf_data,
+                'filename': filename, 'page': page, 'zoom': zoom,
+                'pagemode': pagemode, 'nameddest': nameddest
+            }
+            return
+
+        self._load_in_progress = True
+        try:
+            result = self._handle_unsaved_before_action(
+                pending_action={'type': 'load_pdf_bytes', 'pdf_data': pdf_data,
+                                'filename': filename, 'page': page, 'zoom': zoom,
+                                'pagemode': pagemode, 'nameddest': nameddest}
+            )
+            if result == 'deferred':
+                return
+            if result == 'cancelled':
+                return
+
+            self._execute_load_pdf_bytes(pdf_data, filename, page, zoom,
+                                         pagemode, nameddest)
+        finally:
+            self._load_in_progress = False
+
+    def _execute_load_pdf_bytes(
+        self,
+        pdf_data: bytes,
+        filename: str = "document.pdf",
+        page: Optional[int] = None,
+        zoom: Optional[Union[str, int, float]] = None,
+        pagemode: Optional[str] = None,
+        nameddest: Optional[str] = None
+    ):
+        """Execute the actual PDF-from-bytes loading (no unsaved changes check)."""
         import tempfile
         import uuid
 
@@ -568,7 +727,12 @@ class InProcessBackend(ViewerBackend):
             # Create file URL
             pdf_url = QUrl.fromLocalFile(str(temp_path))
             self._current_pdf_url = pdf_url.toString()
-            self._has_annotations = False
+
+            # Reset annotation tracker for the new document
+            # Use content hash as document identifier for bytes
+            import hashlib
+            doc_id = hashlib.md5(pdf_data[:1024]).hexdigest()  # Hash first 1KB for efficiency
+            self._annotation_tracker.set_document(doc_id)
 
             # Build viewer URL with PDF file and optional viewer options
             viewer_qurl = self._build_viewer_url(
@@ -590,13 +754,22 @@ class InProcessBackend(ViewerBackend):
 
     def show_blank_page(self):
         """Show blank viewer with no PDF loaded."""
+        if self._load_in_progress:
+            return
+        # If async save in progress, defer blank page as pending action
+        if self._save_mode != 'normal':
+            self._pending_load = {'type': 'show_blank_page'}
+            return
+
         # Clean up temp file when closing PDF
         self._cleanup_temp_pdf()
 
         self._current_pdf_url = None
-        self._has_annotations = False
         self._original_pdf_path = None
         self._current_pdf_directory = None
+
+        # Reset annotation tracker since we're leaving the document
+        self._annotation_tracker.reset()
 
         # Reload viewer with empty file parameter to prevent demo PDF from loading
         # PDF.js loads "compressed.tracemonkey-pldi-09.pdf" by default if no file param
@@ -608,20 +781,13 @@ class InProcessBackend(ViewerBackend):
         self.web_view.setUrl(viewer_qurl)
 
     def print_pdf(self):
-        """Trigger print for current PDF."""
-        # Trigger JavaScript print by simulating print button click
-        # The interceptor.js will catch this and call bridge.print_pdf()
-        js_code = '''
-        (function() {
-            const printButton = document.getElementById('printButton');
-            if (printButton) {
-                printButton.click();
-            } else {
-                console.error('Print button not found');
-            }
-        })();
-        '''
-        self.web_view.page().runJavaScript(js_code)
+        """Trigger print for current PDF.
+
+        Triggers PDFViewerApplication.download() to get PDF data with annotations,
+        then asynchronously feeds it to the print handler when the data arrives
+        via the bridge's save_requested signal.
+        """
+        self._do_print_pdf()
 
     def save_pdf(self):
         """Save the current PDF with annotations."""
@@ -657,14 +823,16 @@ class InProcessBackend(ViewerBackend):
             # Disconnect signals
             try:
                 self.web_view.loadFinished.disconnect()
-            except:
+            except (RuntimeError, TypeError):
+                # RuntimeError: signal not connected, TypeError: wrong signature
                 pass
 
         # Delete page BEFORE profile (critical for proper cleanup)
         if self._page:
             try:
                 self._page.deleteLater()
-            except:
+            except RuntimeError:
+                # Object already deleted
                 pass
             self._page = None
 
@@ -675,7 +843,8 @@ class InProcessBackend(ViewerBackend):
                 from PySide6.QtWebEngineCore import QWebEngineProfile
                 if self._profile != QWebEngineProfile.defaultProfile():
                     self._profile.deleteLater()
-            except:
+            except RuntimeError:
+                # Object already deleted
                 pass
             self._profile = None
 
@@ -691,17 +860,21 @@ class InProcessBackend(ViewerBackend):
         """Destructor - ensure temp files are cleaned up even on garbage collection."""
         try:
             self._cleanup_temp_pdf()
-        except:
-            # Ignore errors during garbage collection
+        except (OSError, RuntimeError, AttributeError):
+            # OSError: file operation failed, RuntimeError: Qt object deleted,
+            # AttributeError: attribute already cleaned up during shutdown
             pass
 
     def has_annotations(self) -> bool:
         """Check if current PDF has annotations.
 
+        Delegates to the AnnotationStateTracker which monitors annotation
+        changes reported by JavaScript through the bridge.
+
         Returns:
             True if PDF has been annotated, False otherwise.
         """
-        return self._has_annotations
+        return self._annotation_tracker.has_unsaved_changes()
 
     def get_page_count(self) -> int:
         """Get total number of pages.
@@ -745,19 +918,19 @@ class InProcessBackend(ViewerBackend):
             import pypdfium2 as pdfium
             import io
             pdf = pdfium.PdfDocument(io.BytesIO(data))
-            count = len(pdf)
-            pdf.close()
-            return count
-        except Exception:
+            try:
+                count = len(pdf)
+                return count
+            finally:
+                pdf.close()
+        except (ImportError, Exception):
             # Fallback: try pikepdf
             try:
                 import pikepdf
                 import io
-                pdf = pikepdf.open(io.BytesIO(data))
-                count = len(pdf.pages)
-                pdf.close()
-                return count
-            except Exception:
+                with pikepdf.open(io.BytesIO(data)) as pdf:
+                    return len(pdf.pages)
+            except (ImportError, Exception):
                 # Can't determine page count, return 1
                 return 1
 
@@ -776,15 +949,66 @@ class InProcessBackend(ViewerBackend):
             # Open with system's default PDF viewer
             system = platform.system()
 
-            if system == 'Linux':
-                subprocess.Popen(['xdg-open', str(temp_path)])
-            elif system == 'Darwin':  # macOS
-                subprocess.Popen(['open', str(temp_path)])
-            elif system == 'Windows':
-                os.startfile(str(temp_path))
+            # In PyInstaller frozen builds, child processes inherit library
+            # path overrides that can break the system viewer.
+            clean_env = _get_clean_subprocess_env()
+
+            try:
+                if system == 'Linux':
+                    proc = subprocess.Popen(
+                        ['xdg-open', str(temp_path)],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                        env=clean_env,
+                    )
+                    self._check_system_viewer_result(proc, 'xdg-open')
+                elif system == 'Darwin':  # macOS
+                    proc = subprocess.Popen(
+                        ['open', str(temp_path)],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                        env=clean_env,
+                    )
+                    self._check_system_viewer_result(proc, 'open')
+                elif system == 'Windows':
+                    os.startfile(str(temp_path))
+                else:
+                    self.error_occurred.emit(f"Unsupported platform: {system}")
+            except FileNotFoundError as e:
+                self.error_occurred.emit(f"System PDF viewer not found: {e}")
+            except OSError as e:
+                self.error_occurred.emit(f"Failed to open PDF viewer: {e}")
 
         except Exception as e:
             self.error_occurred.emit(f"System print error: {e}")
+
+    def _check_system_viewer_result(self, proc, command_name: str):
+        """Check if a system viewer subprocess exited with an error.
+
+        Uses a brief timer so the main event loop is not blocked.  If the
+        process is still running after the delay it is assumed to have
+        launched successfully.
+
+        Args:
+            proc: The ``subprocess.Popen`` instance to monitor.
+            command_name: Human-readable name for error messages.
+        """
+        def _check():
+            retcode = proc.poll()
+            if retcode is not None and retcode != 0:
+                stderr_output = ''
+                try:
+                    stderr_output = proc.stderr.read().decode(
+                        'utf-8', errors='ignore'
+                    ).strip()
+                except Exception:
+                    pass
+                error_msg = f"{command_name} failed (exit code {retcode})"
+                if stderr_output:
+                    error_msg += f": {stderr_output}"
+                self.error_occurred.emit(error_msg)
+
+        QTimer.singleShot(3000, _check)
 
     def _print_with_qt_dialog(self, data: bytes):
         """Print using custom print dialog in separate process (QT_DIALOG handler).
@@ -821,7 +1045,10 @@ class InProcessBackend(ViewerBackend):
             self._print_manager.show_print_dialog_and_print(
                 pdf_data=data,
                 total_pages=total_pages,
-                timeout_ms=300000  # 5 minute timeout
+                timeout_ms=300000,  # 5 minute timeout
+                print_dpi=self.config.print_dpi,
+                print_fit_to_page=self.config.print_fit_to_page,
+                print_parallel_pages=self.config.print_parallel_pages
             )
 
         except Exception as e:
@@ -865,7 +1092,42 @@ class InProcessBackend(ViewerBackend):
 
     # Signal handlers - connect bridge signals to backend signals
     def _on_save_requested(self, data: bytes, filename: str):
-        """Handle save request from bridge.
+        """Handle save request from bridge — central routing for all save operations.
+
+        This method is the single handler for bridge.save_requested. It routes
+        incoming PDF data based on _save_mode:
+
+        - 'normal': User clicked the PDF.js download button → show Save As dialog
+        - 'auto_save': Async auto-save in progress → write to _save_target
+        - 'save_as': Async Save As in progress → show Save As dialog then complete
+        - 'print': Async print in progress → send data to print handler
+
+        After handling the data, this method completes any deferred action
+        (pending load, pending close) stored in _pending_load/_close_deferred.
+
+        Args:
+            data: PDF data with annotations.
+            filename: Suggested filename.
+        """
+        # Save arrived — cancel the timeout timer
+        self._stop_save_timeout()
+
+        mode = self._save_mode
+
+        if mode == 'auto_save':
+            self._complete_auto_save(data)
+        elif mode == 'save_as':
+            self._complete_save_as(data, filename)
+        elif mode == 'print':
+            self._complete_print(data)
+        else:
+            # Normal mode: user clicked download button in PDF.js toolbar
+            self._do_normal_save(data, filename)
+
+    def _do_normal_save(self, data: bytes, filename: str):
+        """Handle normal save (user clicked download button in PDF.js).
+
+        Shows a Save As dialog and writes the file.
 
         Args:
             data: PDF data with annotations.
@@ -873,13 +1135,10 @@ class InProcessBackend(ViewerBackend):
         """
         # Use original PDF path if available, otherwise construct from directory + filename
         if self._original_pdf_path and self._original_pdf_path.exists():
-            # Use original path as default (user can change the name if they want)
             initial_path = str(self._original_pdf_path)
         elif self._current_pdf_directory:
-            # If no original path but we have the directory, use directory + suggested filename
             initial_path = str(Path(self._current_pdf_directory) / filename)
         else:
-            # Fallback to just the filename (will use current working directory)
             initial_path = filename
 
         # Show save dialog
@@ -895,14 +1154,240 @@ class InProcessBackend(ViewerBackend):
 
         if save_path:
             try:
-                # Write file
                 with open(save_path, 'wb') as f:
                     f.write(data)
+
+                # Mark annotations as saved in Qt tracker
+                self._annotation_tracker.mark_saved()
 
                 # Emit backend signal
                 self.save_requested.emit(data, save_path)
             except Exception as e:
                 self.error_occurred.emit(f"Failed to save PDF: {e}")
+
+    def _complete_auto_save(self, data: bytes):
+        """Complete an async auto-save operation.
+
+        Writes PDF data to the previously captured _save_target path,
+        then executes any pending load or close action.
+
+        Args:
+            data: PDF data with annotations.
+        """
+        save_target = self._save_target
+        self._save_mode = 'normal'
+        self._save_target = None
+
+        if not save_target:
+            self.error_occurred.emit("Auto-save failed: no target path")
+            self._cancel_pending_action()
+            return
+
+        try:
+            with open(save_target, 'wb') as f:
+                f.write(data)
+
+            # Mark annotations as saved
+            self._annotation_tracker.mark_saved()
+            self._mark_annotations_saved()
+            self._suppress_beforeunload()
+
+        except PermissionError:
+            self.error_occurred.emit(
+                f"Cannot write to {save_target}. Save As fallback."
+            )
+            # Fall back to Save As
+            self._save_mode = 'save_as'
+            # Data is already available, handle it directly
+            self._complete_save_as(data, save_target.name)
+            return
+
+        except Exception as e:
+            self.error_occurred.emit(f"Auto-save failed: {e}")
+            self._cancel_pending_action()
+            return
+
+        # Execute deferred action
+        self._execute_pending_action()
+
+    def _complete_save_as(self, data: bytes, filename: str):
+        """Complete an async Save As operation.
+
+        Shows a Save As dialog, writes the file, then executes any pending action.
+
+        Args:
+            data: PDF data with annotations.
+            filename: Suggested filename.
+        """
+        self._save_mode = 'normal'
+        self._save_target = None
+
+        # Determine initial path for save dialog
+        if self._original_pdf_path and self._original_pdf_path.exists():
+            initial_path = str(self._original_pdf_path)
+        elif self._current_pdf_directory:
+            initial_path = str(Path(self._current_pdf_directory) / filename)
+        else:
+            initial_path = filename
+
+        save_path, _ = QFileDialog.getSaveFileName(
+            self.parent(),
+            self.tr['save_pdf_title'],
+            initial_path,
+            self.tr['pdf_files_filter']
+        )
+
+        if not save_path:
+            # User cancelled Save As — cancel the pending action too
+            self._cancel_pending_action()
+            return
+
+        try:
+            with open(save_path, 'wb') as f:
+                f.write(data)
+
+            self._annotation_tracker.mark_saved()
+            self._mark_annotations_saved()
+            self._suppress_beforeunload()
+
+        except Exception as e:
+            self.error_occurred.emit(f"Failed to save PDF: {e}")
+            self._cancel_pending_action()
+            return
+
+        # Execute deferred action
+        self._execute_pending_action()
+
+    def _complete_print(self, data: bytes):
+        """Complete an async print operation.
+
+        Sends PDF data to the print handler.
+
+        Args:
+            data: PDF data with annotations.
+        """
+        self._save_mode = 'normal'
+
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtCore import Qt
+        QApplication.restoreOverrideCursor()
+
+        if data:
+            self._on_print_requested(data)
+        else:
+            self.error_occurred.emit("Failed to get PDF data for printing")
+
+    # Acknowledgment timeout (ms). If JS doesn't call notify_save_started
+    # within this time, the JS environment is considered dead and the save
+    # is skipped. This is short because performDownload() calls
+    # notify_save_started immediately before doing any heavy work.
+    _SAVE_ACK_TIMEOUT_MS = 2000  # 2 seconds
+
+    def _trigger_js_download(self):
+        """Trigger PDFViewerApplication.download() in JavaScript.
+
+        This calls the exact same code path as the manual download button in
+        PDF.js. The interceptor has overridden download() to call
+        performDownload(), which does: notify_save_started → exit edit mode →
+        saveDocument() → base64 encode → bridge.save_pdf(). The bridge's
+        save_pdf slot then emits save_requested, which is handled by
+        _on_save_requested.
+
+        This is non-blocking — the method returns immediately and the data
+        arrives asynchronously via the save_requested signal.
+
+        A two-phase timeout protects against JS failure:
+        - Phase 1 (ack, 2s): If JS never calls notify_save_started, the
+          request didn't reach performDownload(). Save is skipped.
+        - Phase 2 (no timeout): Once JS acknowledges, saveDocument() may
+          take arbitrarily long for large PDFs. We wait indefinitely.
+        """
+        if not self.web_view or not self.web_view.page():
+            return
+
+        # Start ack timeout — JS should call notify_save_started quickly
+        self._save_timeout_timer = QTimer(self)
+        self._save_timeout_timer.setSingleShot(True)
+        self._save_timeout_timer.timeout.connect(self._on_save_ack_timeout)
+        self._save_timeout_timer.start(self._SAVE_ACK_TIMEOUT_MS)
+
+        self.web_view.page().runJavaScript(
+            "if (typeof window.PDFViewerApplication !== 'undefined'"
+            " && window.PDFViewerApplication.pdfDocument) {"
+            "  PDFViewerApplication.download();"
+            "}"
+        )
+
+    def _on_save_started(self):
+        """Handle acknowledgment from JS that performDownload() is running.
+
+        Cancels the ack timeout. From here, saveDocument() may take
+        arbitrarily long — we don't impose a completion timeout because
+        large PDFs legitimately need more time.
+        """
+        self._stop_save_timeout()
+
+    def _on_save_ack_timeout(self):
+        """Handle timeout when JS never acknowledged the save request.
+
+        This means performDownload() was never entered — the JS environment
+        is broken (e.g., web view navigated away, PDF.js not loaded).
+        Resets save state and executes any pending action without saving.
+        """
+        print('Save skipped: JS did not acknowledge download request')
+        self._save_mode = 'normal'
+        self._save_target = None
+        self._save_timeout_timer = None
+
+        from PySide6.QtWidgets import QApplication
+        QApplication.restoreOverrideCursor()
+
+        self._execute_pending_action()
+
+    def _stop_save_timeout(self):
+        """Stop the save timeout timer if it's running."""
+        if self._save_timeout_timer is not None:
+            self._save_timeout_timer.stop()
+            self._save_timeout_timer = None
+
+    def _execute_pending_action(self):
+        """Execute a deferred action after async save completes.
+
+        Handles pending load_pdf, load_pdf_bytes, or close operations
+        that were deferred while waiting for save data.
+        """
+        pending_load = self._pending_load
+        pending_close = self._close_deferred
+        self._pending_load = None
+        self._close_deferred = None
+
+        if pending_load:
+            action_type = pending_load.pop('type')
+            try:
+                if action_type == 'load_pdf':
+                    self._execute_load_pdf(**pending_load)
+                elif action_type == 'load_pdf_bytes':
+                    self._execute_load_pdf_bytes(**pending_load)
+                elif action_type == 'show_blank_page':
+                    self.show_blank_page()
+            except Exception as e:
+                self.error_occurred.emit(f"Failed to load PDF: {e}")
+        elif pending_close:
+            # Re-trigger close on the widget — unsaved changes are now handled
+            widget = self.parent()
+            if widget:
+                widget.close()
+
+    def _cancel_pending_action(self):
+        """Cancel a deferred action (e.g. when Save As is cancelled).
+
+        Resets all async save state and pending action state.
+        """
+        self._stop_save_timeout()
+        self._save_mode = 'normal'
+        self._save_target = None
+        self._pending_load = None
+        self._close_deferred = False
 
     def _on_print_requested(self, data: bytes):
         """Handle print request from bridge.
@@ -910,9 +1395,6 @@ class InProcessBackend(ViewerBackend):
         Args:
             data: PDF data with annotations.
         """
-        # Store PDF data for printing
-        self._last_print_data = data
-
         # Emit signal for external handlers
         self.print_requested.emit(data)
 
@@ -937,11 +1419,86 @@ class InProcessBackend(ViewerBackend):
             self.error_occurred.emit(f"Print handler error: {e}")
 
     def _on_load_requested(self, path: str):
-        """Handle load request from bridge."""
-        try:
-            self.load_pdf(path)
-        except Exception as e:
-            self.error_occurred.emit(f"Failed to load PDF: {e}")
+        """Handle load request from bridge.
+
+        Uses QTimer.singleShot to break out of the JavaScript callback chain.
+        load_pdf() handles unsaved changes internally via the async pattern.
+        """
+        from PySide6.QtCore import QTimer
+
+        def do_load():
+            try:
+                self.load_pdf(path)
+            except Exception as e:
+                self.error_occurred.emit(f"Failed to load PDF: {e}")
+
+        # Defer to next event loop iteration to break out of JS callback chain
+        QTimer.singleShot(0, do_load)
+
+    def _on_open_pdf_requested(self):
+        """Handle open PDF request from PDF.js load button.
+
+        Shows file dialog first, then calls load_pdf() which handles
+        unsaved changes internally via the async pattern.
+
+        Uses QTimer.singleShot to break out of the JavaScript callback chain.
+        """
+        from PySide6.QtCore import QTimer
+
+        def do_open():
+            try:
+                # Show file dialog first
+                initial_dir = self._current_pdf_directory or _get_real_home_directory()
+                file_path, _ = QFileDialog.getOpenFileName(
+                    self.parent(),
+                    self.tr['open_pdf_title'],
+                    initial_dir,
+                    self.tr['pdf_files_filter']
+                )
+
+                if file_path:
+                    # load_pdf handles unsaved changes via async pattern
+                    self.load_pdf(file_path)
+            except Exception as e:
+                self.error_occurred.emit(f"Failed to open PDF: {e}")
+
+        # Defer to next event loop iteration to break out of JS callback chain
+        QTimer.singleShot(0, do_open)
+
+    def _on_print_pdf_requested(self):
+        """Handle print PDF request from PDF.js print button.
+
+        This triggers the same flow as clicking a Qt "Print" button.
+        Uses QTimer.singleShot to break out of the JavaScript callback chain.
+        """
+        from PySide6.QtCore import QTimer
+
+        # Defer to next event loop iteration to break out of JS callback chain
+        QTimer.singleShot(0, self._do_print_pdf)
+
+    def _do_print_pdf(self):
+        """Execute print flow: trigger async PDF data capture, then print.
+
+        This is the shared implementation for both Qt print button and PDF.js
+        print button. It sets _save_mode to 'print' and triggers
+        PDFViewerApplication.download(). When the data arrives via
+        save_requested, _complete_print() sends it to the print handler.
+        """
+        # Early check: don't proceed if no PDF is loaded or save already in progress
+        if not self._current_pdf_url:
+            self.error_occurred.emit("No PDF loaded")
+            return
+        if self._save_mode != 'normal':
+            return
+
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtCore import Qt
+
+        # Show busy cursor — will be restored in _complete_print()
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+        self._save_mode = 'print'
+        self._trigger_js_download()
 
     def _on_pdf_loaded(self, metadata: dict):
         """Handle PDF loaded event from bridge."""
@@ -954,7 +1511,6 @@ class InProcessBackend(ViewerBackend):
 
     def _on_annotation_changed(self):
         """Handle annotation changed event from bridge."""
-        self._has_annotations = True
         self.annotation_modified.emit()
 
     def _on_page_changed(self, current: int, total: int):
@@ -1087,6 +1643,249 @@ class InProcessBackend(ViewerBackend):
             self.error_occurred.emit(f"Crash recovery failed: {e}")
             self._is_recovering_from_crash = False
 
+    # Unsaved changes handling
+    def _exit_annotation_edit_mode(self):
+        """Exit annotation edit mode in PDF.js to commit in-progress annotations.
+
+        This dispatches a switchannotationeditormode event to PDF.js which:
+        1. Commits any annotation currently being edited
+        2. Writes the data to AnnotationStorage (triggers onSetModified)
+        3. onSetModified fires notify_annotation_changed on the bridge
+        4. The bridge signal updates our AnnotationStateTracker
+
+        This method blocks briefly (up to 500ms) to ensure the JS executes
+        and the bridge signal propagates back to Qt. This is safe because
+        it's only called from Qt-initiated contexts (load_pdf, close button),
+        never from JS callbacks.
+        """
+        if not self.web_view or not self.web_view.page():
+            return
+
+        # Exit edit mode and return whether mode was active
+        js_code = """
+        (function() {
+            const app = window.PDFViewerApplication;
+            if (app && app.pdfViewer) {
+                const currentMode = app.pdfViewer.annotationEditorMode;
+                if (currentMode && currentMode > 0) {
+                    if (app.eventBus) {
+                        app.eventBus.dispatch('switchannotationeditormode', {
+                            source: app,
+                            mode: 0
+                        });
+                    }
+                    return true;
+                }
+            }
+            return false;
+        })();
+        """
+        was_in_edit_mode = [None]
+
+        def callback(result):
+            was_in_edit_mode[0] = result
+
+        self.web_view.page().runJavaScript(js_code, callback)
+
+        # Wait for JS to execute and bridge signal to propagate.
+        # We need two things to happen:
+        # 1. The JS switchannotationeditormode event commits the annotation
+        # 2. onSetModified fires → bridge.notify_annotation_changed → tracker update
+        # Both happen asynchronously, so we processEvents until the callback fires.
+        from PySide6.QtWidgets import QApplication
+        import time
+        deadline = time.monotonic() + 0.5  # 500ms max wait
+        while was_in_edit_mode[0] is None and time.monotonic() < deadline:
+            QApplication.processEvents()
+
+        # If edit mode was active, give extra time for the bridge signal to arrive
+        if was_in_edit_mode[0]:
+            extra_deadline = time.monotonic() + 0.2  # 200ms for bridge propagation
+            while time.monotonic() < extra_deadline:
+                QApplication.processEvents()
+
+    def has_unsaved_changes(self) -> bool:
+        """Check if document has unsaved annotations.
+
+        Uses Qt-side AnnotationStateTracker which monitors annotation changes
+        reported by JavaScript through the bridge. This is more reliable than
+        querying PDF.js internal state directly.
+
+        The tracker is:
+        - Marked as modified when JS reports annotation changes
+        - Reset when a new PDF is loaded
+        - Cleared when a save completes successfully
+
+        Returns:
+            True if there are unsaved changes, False otherwise.
+        """
+        return self._annotation_tracker.has_unsaved_changes()
+
+    def _handle_unsaved_before_action(self, pending_action: dict) -> str:
+        """Check for unsaved changes and either proceed, defer, or cancel.
+
+        This is the core decision method called by load_pdf/load_pdf_bytes
+        before navigating. It shows the prompt dialog (if configured),
+        determines the save mode, and either:
+        - Returns 'proceed' if no save needed (no changes, disabled, discard)
+        - Returns 'deferred' if async save was triggered (caller should return)
+        - Returns 'cancelled' if user cancelled Save As dialog
+
+        The actual save is asynchronous: we set _save_mode and call
+        _trigger_js_download(). When the data arrives via save_requested,
+        _on_save_requested routes it to _complete_auto_save/_complete_save_as,
+        which then calls _execute_pending_action() to do the deferred load.
+
+        Args:
+            pending_action: Dict describing the action to defer. Must contain
+                'type' key ('load_pdf' or 'load_pdf_bytes') plus the method's kwargs.
+
+        Returns:
+            'proceed': Safe to continue immediately (no unsaved changes or discarded)
+            'deferred': Async save triggered, action stored in _pending_load
+            'cancelled': User cancelled the Save As dialog
+        """
+        action = self.config.features.unsaved_changes_action
+
+        if action == "disabled":
+            self._suppress_beforeunload()
+            return 'proceed'
+
+        # Exit annotation edit mode first to commit any in-progress annotations
+        self._exit_annotation_edit_mode()
+
+        if not self.has_unsaved_changes():
+            return 'proceed'
+
+        if action == "auto_save":
+            # Check if we have an original file path to overwrite
+            if not self._original_pdf_path or not self._original_pdf_path.exists():
+                # No original file — need Save As, which is also async
+                self._save_mode = 'save_as'
+            else:
+                self._save_mode = 'auto_save'
+                self._save_target = self._original_pdf_path
+
+            self._pending_load = pending_action
+            self._trigger_js_download()
+            return 'deferred'
+
+        if action == "prompt":
+            dialog = UnsavedChangesDialog(self.parent())
+            result = dialog.get_result()
+
+            if result == UnsavedChangesDialog.SAVE_AS:
+                self._save_mode = 'save_as'
+                self._pending_load = pending_action
+                self._trigger_js_download()
+                return 'deferred'
+
+            elif result == UnsavedChangesDialog.SAVE:
+                if not self._original_pdf_path or not self._original_pdf_path.exists():
+                    self._save_mode = 'save_as'
+                else:
+                    self._save_mode = 'auto_save'
+                    self._save_target = self._original_pdf_path
+
+                self._pending_load = pending_action
+                self._trigger_js_download()
+                return 'deferred'
+
+            else:  # DISCARD
+                self._annotation_tracker.reset()
+                self._suppress_beforeunload()
+                return 'proceed'
+
+        return 'proceed'
+
+    def handle_unsaved_changes(self) -> bool:
+        """Handle unsaved changes according to config (for external callers).
+
+        This is the public API called by closeEvent and external code.
+        For close operations, we still need synchronous behavior: show the
+        dialog, trigger the save, and defer the actual close.
+
+        For the common case of load_pdf triggering this, the internal
+        _handle_unsaved_before_action is used instead.
+
+        Returns:
+            True if it's safe to proceed (no changes, discarded, or save triggered).
+            False if Save As was cancelled by user.
+        """
+        # If an async save is already in progress, it's safe to proceed
+        # (the pending action will complete when save finishes)
+        if self._save_mode != 'normal':
+            return True
+
+        action = self.config.features.unsaved_changes_action
+
+        if action == "disabled":
+            self._suppress_beforeunload()
+            return True
+
+        # Exit annotation edit mode first
+        self._exit_annotation_edit_mode()
+
+        if not self.has_unsaved_changes():
+            return True
+
+        if action == "auto_save":
+            if not self._original_pdf_path or not self._original_pdf_path.exists():
+                self._save_mode = 'save_as'
+            else:
+                self._save_mode = 'auto_save'
+                self._save_target = self._original_pdf_path
+            # Store close as pending action
+            self._close_deferred = True
+            self._trigger_js_download()
+            return False  # Caller should NOT proceed — close will be re-triggered
+
+        if action == "prompt":
+            dialog = UnsavedChangesDialog(self.parent())
+            result = dialog.get_result()
+
+            if result == UnsavedChangesDialog.SAVE_AS:
+                self._save_mode = 'save_as'
+                self._close_deferred = True
+                self._trigger_js_download()
+                return False
+
+            elif result == UnsavedChangesDialog.SAVE:
+                if not self._original_pdf_path or not self._original_pdf_path.exists():
+                    self._save_mode = 'save_as'
+                else:
+                    self._save_mode = 'auto_save'
+                    self._save_target = self._original_pdf_path
+                self._close_deferred = True
+                self._trigger_js_download()
+                return False
+
+            else:  # DISCARD
+                self._annotation_tracker.reset()
+                self._suppress_beforeunload()
+                return True
+
+        return True
+
+    def _suppress_beforeunload(self):
+        """Suppress the browser's beforeunload dialog.
+
+        This clears PDF.js internal state that triggers the beforeunload confirmation.
+        The JavaScript side (interceptor.js) handles preventing the event itself.
+        """
+        if self.web_view and self.web_view.page():
+            # Call suppressBeforeUnload which clears PDF.js internal flags
+            self.web_view.page().runJavaScript(
+                "if (typeof window.suppressBeforeUnload === 'function') window.suppressBeforeUnload();"
+            )
+
+    def _mark_annotations_saved(self):
+        """Mark annotations as saved in JavaScript."""
+        if self.web_view and self.web_view.page():
+            self.web_view.page().runJavaScript(
+                "if (typeof window.markAnnotationsSaved === 'function') window.markAnnotationsSaved();"
+            )
+
     def _cleanup_before_shutdown(self):
         """Perform graceful cleanup before shutdown.
 
@@ -1119,7 +1918,8 @@ class InProcessBackend(ViewerBackend):
             if self.web_view and self.web_view.page():
                 try:
                     self.web_view.page().renderProcessTerminated.disconnect()
-                except:
+                except (RuntimeError, TypeError):
+                    # RuntimeError: signal not connected, TypeError: wrong signature
                     pass
 
             # Now call regular cleanup

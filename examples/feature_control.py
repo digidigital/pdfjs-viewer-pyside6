@@ -1,6 +1,7 @@
 """Feature control example.
 
-Demonstrates how to disable specific UI features in the PDF viewer.
+Demonstrates how to disable specific UI features in the PDF viewer WITHOUT using preset.
+Remember: The preferred way is to use presets and just change things you need to adjust.
 """
 
 import sys

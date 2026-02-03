@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QCheckBox, QMessageBox
 )
 from PySide6.QtCore import Qt
+import pdfjs_viewer
 from pdfjs_viewer import PDFViewerWidget, PDFViewerConfig, PrintHandler
 
 
@@ -38,8 +39,7 @@ class PrintHandlersWindow(QMainWindow):
         config = PDFViewerConfig(
             print_handler=PrintHandler.SYSTEM,
             print_dpi=300,
-            print_fit_to_page=True,
-            print_parallel_pages=4  
+            print_fit_to_page=True
         )
         config.features.load_enabled = True
         self.viewer = PDFViewerWidget(config=config)
@@ -131,18 +131,6 @@ class PrintHandlersWindow(QMainWindow):
         self.fit_checkbox.stateChanged.connect(self._update_config)
         qt_layout.addWidget(self.fit_checkbox)
 
-        # Parallel pages setting
-        parallel_row = QHBoxLayout()
-        parallel_row.addWidget(QLabel("Parallel page rendering:"))
-        self.parallel_spin = QSpinBox()
-        self.parallel_spin.setMinimum(1)
-        self.parallel_spin.setMaximum(16)
-        self.parallel_spin.setValue(4)
-        self.parallel_spin.valueChanged.connect(self._update_config)
-        parallel_row.addWidget(self.parallel_spin)
-        parallel_row.addStretch()
-        qt_layout.addLayout(parallel_row)
-
         self.qt_settings_group.setLayout(qt_layout)
         self.qt_settings_group.setEnabled(False)
         layout.addWidget(self.qt_settings_group)
@@ -187,8 +175,7 @@ class PrintHandlersWindow(QMainWindow):
         config = PDFViewerConfig(
             print_handler=handler,
             print_dpi=self.dpi_spin.value(),
-            print_fit_to_page=self.fit_checkbox.isChecked(),
-            print_parallel_pages=self.parallel_spin.value()
+            print_fit_to_page=self.fit_checkbox.isChecked()
         )
         config.features.load_enabled = True
         
@@ -343,6 +330,10 @@ class PrintHandlersWindow(QMainWindow):
 
 
 def main():
+    # Required for QT_DIALOG print handler when frozen with PyInstaller.
+    # Must be called before QApplication is created.
+    pdfjs_viewer.freeze_support()
+
     app = QApplication(sys.argv)
 
     # Set application style

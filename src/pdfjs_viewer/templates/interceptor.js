@@ -139,45 +139,39 @@
         }
     }
 
-    // Shared download logic
+    // Download logic — used by download button clicks
     async function performDownload(app) {
         try {
             const pdfDoc = app.pdfDocument;
-            if (!pdfDoc) {
-                console.error('No PDF document loaded');
-                return;
+            if (!pdfDoc) return;
+
+            // Acknowledge to Python that we received the download request
+            // Python uses this to distinguish 'JS is working' from 'JS is dead'
+            if (window.pdfBridge && typeof window.pdfBridge.notify_save_started === 'function') {
+                window.pdfBridge.notify_save_started();
             }
 
-            // Check annotation storage - try multiple ways to detect annotations
-            let hasAnnotations = false;
-            if (pdfDoc.annotationStorage) {
-                // Try different ways to check for annotations
-                if (typeof pdfDoc.annotationStorage.size !== 'undefined') {
-                    hasAnnotations = pdfDoc.annotationStorage.size > 0;
-                } else if (typeof pdfDoc.annotationStorage.getAll === 'function') {
-                    const allAnnotations = pdfDoc.annotationStorage.getAll();
-                    hasAnnotations = Object.keys(allAnnotations).length > 0;
+            // Exit annotation edit mode to commit any in-progress annotations
+            if (app.pdfViewer) {
+                const currentMode = app.pdfViewer.annotationEditorMode;
+                if (currentMode && currentMode > 0) {
+                    if (app.eventBus) {
+                        app.eventBus.dispatch('switchannotationeditormode', {
+                            source: app,
+                            mode: 0  // NONE
+                        });
+                    }
+                    // Give PDF.js time to commit
+                    await new Promise(resolve => setTimeout(resolve, 150));
                 }
             }
-
-            // Check if editor has unsaved changes
-            if (!hasAnnotations && app.pdfDocument && app.pdfDocument.annotationStorage) {
-                const storage = app.pdfDocument.annotationStorage;
-                if (storage.serializable && typeof storage.serializable.size !== 'undefined') {
-                    hasAnnotations = storage.serializable.size > 0;
-                }
-            }
-
-            // Check if saveDocument method exists
-            const hasSaveDocument = typeof pdfDoc.saveDocument === 'function';
 
             let data;
-            // Always try to use saveDocument if available and we think there might be annotations
-            if (hasSaveDocument && hasAnnotations) {
+            // Always try to use saveDocument if available (includes annotations)
+            if (typeof pdfDoc.saveDocument === 'function') {
                 try {
                     data = await pdfDoc.saveDocument();
                 } catch (e) {
-                    console.error('saveDocument() failed:', e);
                     data = await pdfDoc.getData();
                 }
             } else if (typeof pdfDoc.getData === 'function') {
@@ -191,8 +185,6 @@
 
             if (window.pdfBridge && typeof window.pdfBridge.save_pdf === 'function') {
                 window.pdfBridge.save_pdf(base64, filename);
-            } else {
-                console.error('Bridge not available for save');
             }
         } catch (e) {
             console.error('Save error:', e);
@@ -202,98 +194,90 @@
         }
     }
 
-    // Setup load interception
+    // Setup load interception for ALL PDF.js open file mechanisms
     function setupLoadInterception(app) {
         try {
-            // Intercept the "Open File" button in secondary toolbar
-            const secondaryOpenFile = document.getElementById('secondaryOpenFile');
+            // Get all open file elements
+            const openFile = document.getElementById('openFile');           // Primary toolbar button
+            const secondaryOpenFile = document.getElementById('secondaryOpenFile');  // Secondary toolbar button
+            const fileInput = document.getElementById('fileInput');         // Hidden file input element
 
             const handleOpenFile = async (e) => {
                 e.preventDefault();
                 e.stopPropagation();
 
-                try {
-                    if (window.pdfBridge && typeof window.pdfBridge.load_pdf_dialog === 'function') {
-                        // QWebChannel returns a Promise, so we need to await it
-                        const filePath = await window.pdfBridge.load_pdf_dialog();
-
-                        // If user selected a file, load it via backend
-                        if (filePath && filePath.length > 0) {
-                            // Call backend load method instead of app.open
-                            // The backend will handle creating proper URLs and loading the PDF
-                            if (window.pdfBridge && typeof window.pdfBridge.load_pdf_from_dialog === 'function') {
-                                window.pdfBridge.load_pdf_from_dialog(filePath);
-                            } else {
-                                console.error('load_pdf_from_dialog method not available');
-                            }
-                        } else {
-                        }
-                    } else {
-                        console.warn('Load bridge method not available');
-                    }
-                } catch (e) {
-                    console.error('Load error:', e);
-                    if (window.pdfBridge && typeof window.pdfBridge.notify_error === 'function') {
-                        window.pdfBridge.notify_error('Load error: ' + e.message);
-                    }
+                // Simply request Qt to handle the entire open PDF flow
+                // Qt will: check unsaved changes, show file dialog, load PDF
+                // This ensures consistent behavior with Qt "Open PDF" buttons
+                if (window.pdfBridge && typeof window.pdfBridge.request_open_pdf === 'function') {
+                    window.pdfBridge.request_open_pdf();
+                } else {
+                    console.warn('request_open_pdf bridge method not available');
                 }
             };
 
-            if (secondaryOpenFile) {
-                secondaryOpenFile.addEventListener('click', handleOpenFile, true);
-                return true;
+            let intercepted = false;
+
+            // Intercept primary toolbar button
+            if (openFile) {
+                openFile.addEventListener('click', handleOpenFile, true);
+                intercepted = true;
             }
 
-            return false;
+            // Intercept secondary toolbar button
+            if (secondaryOpenFile) {
+                secondaryOpenFile.addEventListener('click', handleOpenFile, true);
+                intercepted = true;
+            }
+
+            // Intercept file input element (handles native file dialog)
+            if (fileInput) {
+                fileInput.addEventListener('change', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // Clear the input value to prevent PDF.js from using it
+                    fileInput.value = '';
+                    // Use Qt file dialog instead
+                    handleOpenFile(e);
+                }, true);
+                intercepted = true;
+            }
+
+            // Also intercept PDFViewerApplication.open() for programmatic loads
+            if (typeof app.open === 'function') {
+                const originalOpen = app.open.bind(app);
+                app.open = async function(args) {
+                    // For programmatic opens, we can't easily intercept with a dialog
+                    // The unsaved changes check happens at the Python level when load_pdf is called
+                    // This is mainly for drag-and-drop which is handled by PDF.js
+                    return originalOpen(args);
+                };
+            }
+
+            return intercepted;
         } catch (e) {
             console.error('Failed to setup load interception:', e);
             return false;
         }
     }
 
-    // Setup print interception with fallback
+    // Setup print interception - just call Qt to handle everything
     function setupPrintInterception(app) {
         try {
-            // Intercept print button clicks instead of beforePrint to avoid browser dialog
             const printButton = document.getElementById('printButton');
             const secondaryPrint = document.getElementById('secondaryPrint');
 
-            const handlePrint = async (e) => {
+            const handlePrint = (e) => {
                 e.preventDefault();
                 e.stopPropagation();
 
-                try {
-                    const pdfDoc = app.pdfDocument;
-                    if (!pdfDoc) {
-                        console.error('No PDF document loaded');
-                        return;
-                    }
-
-                    const hasAnnotations = pdfDoc.annotationStorage && pdfDoc.annotationStorage.size > 0;
-
-                    if (hasAnnotations && window.pdfBridge && typeof pdfDoc.saveDocument === 'function') {
-                        const data = await pdfDoc.saveDocument();
-                        const base64 = arrayBufferToBase64(data);
-
-                        if (typeof window.pdfBridge.print_pdf === 'function') {
-                            window.pdfBridge.print_pdf(base64);
-                        }
-                    } else if (window.pdfBridge && typeof pdfDoc.getData === 'function') {
-                        const data = await pdfDoc.getData();
-                        const base64 = arrayBufferToBase64(data);
-
-                        if (typeof window.pdfBridge.print_pdf === 'function') {
-                            window.pdfBridge.print_pdf(base64);
-                        }
-                    } else {
-                        console.warn('Print bridge not available, using browser print');
-                        window.print();
-                    }
-                } catch (e) {
-                    console.error('Print error:', e);
-                    if (window.pdfBridge && typeof window.pdfBridge.notify_error === 'function') {
-                        window.pdfBridge.notify_error('Print error: ' + e.message);
-                    }
+                // Simply request Qt to handle the entire print flow
+                // Qt will: get PDF with annotations, show print dialog, print
+                // This ensures consistent behavior with Qt "Print" buttons
+                if (window.pdfBridge && typeof window.pdfBridge.request_print_pdf === 'function') {
+                    window.pdfBridge.request_print_pdf();
+                } else {
+                    console.warn('request_print_pdf bridge method not available');
                 }
             };
 
@@ -310,6 +294,53 @@
             return false;
         }
     }
+
+    // NOTE: Unsaved changes detection is now handled by Qt-side AnnotationStateTracker
+    // which monitors annotation changes through the bridge's notify_annotation_changed signal.
+    // This is more reliable than querying PDF.js internal state.
+
+    // Get current filename (called from Python)
+    window.getCurrentFilename = function() {
+        return window.PDFViewerApplication._docFilename || 'document.pdf';
+    };
+
+    // Suppress PDF.js beforeunload handler when we're handling unsaved changes
+    // This prevents the browser "are you sure you want to leave" dialog
+    window.suppressBeforeUnload = function() {
+        // Remove any beforeunload handlers
+        window.onbeforeunload = null;
+
+        // Clear PDF.js internal flags that trigger the dialog
+        const app = window.PDFViewerApplication;
+        if (app) {
+            // Reset AcroForm unsaved changes flag
+            app._hasAcroFormUnsavedChanges = false;
+
+            // Reset annotation storage modified flag
+            app._annotationStorageModified = false;
+
+            // Use the public resetModified() API to properly clear the private
+            // #modified flag. Direct assignment (storage._modified = false) does NOT
+            // work because #modified is a true JS private field.
+            // resetModified() also triggers onResetModified callback if set.
+            if (app.pdfDocument && app.pdfDocument.annotationStorage) {
+                app.pdfDocument.annotationStorage.resetModified();
+            }
+        }
+    };
+
+    // Mark annotations as saved (called after successful save)
+    window.markAnnotationsSaved = function() {
+        const app = window.PDFViewerApplication;
+        if (app) {
+            app._annotationStorageModified = false;
+            app._hasAcroFormUnsavedChanges = false;
+            // Use the public resetModified() API (see suppressBeforeUnload comment)
+            if (app.pdfDocument && app.pdfDocument.annotationStorage) {
+                app.pdfDocument.annotationStorage.resetModified();
+            }
+        }
+    };
 
     // Setup event listeners
     function setupEventListeners(app) {
@@ -329,12 +360,37 @@
                     };
                     window.pdfBridge.notify_pdf_loaded(JSON.stringify(metadata));
                 }
-            });
 
-            // Annotation change event
-            app.eventBus.on('annotationeditorstateschanged', () => {
-                if (window.pdfBridge && typeof window.pdfBridge.notify_annotation_changed === 'function') {
-                    window.pdfBridge.notify_annotation_changed();
+                // Hook into AnnotationStorage.onSetModified for reliable change detection.
+                // onSetModified only fires when actual annotation data is written to
+                // storage (i.e. real content changes), unlike annotationeditorstateschanged
+                // which fires on any UI state change. This is the same mechanism PDF.js
+                // itself uses for its beforeunload warning.
+                //
+                // We use defineProperty to make our hook resilient: PDF.js's
+                // _initializeAnnotationStorageCallbacks also sets onSetModified, and
+                // depending on Promise resolution order it could overwrite ours.
+                // By intercepting the property setter, we ensure our bridge notification
+                // always runs regardless of who sets the callback.
+                const storage = app.pdfDocument && app.pdfDocument.annotationStorage;
+                if (storage) {
+                    let _originalOnSetModified = storage.onSetModified;
+                    Object.defineProperty(storage, 'onSetModified', {
+                        get: function() { return _originalOnSetModified; },
+                        set: function(fn) {
+                            // Wrap any callback set by PDF.js (or anyone) to also
+                            // notify the Qt bridge
+                            _originalOnSetModified = () => {
+                                if (typeof fn === 'function') fn();
+                                if (window.pdfBridge && typeof window.pdfBridge.notify_annotation_changed === 'function') {
+                                    window.pdfBridge.notify_annotation_changed();
+                                }
+                            };
+                        },
+                        configurable: true
+                    });
+                    // Trigger the setter to wrap the current value
+                    storage.onSetModified = _originalOnSetModified;
                 }
             });
 
@@ -350,6 +406,31 @@
         } catch (e) {
             console.error('Failed to setup event listeners:', e);
         }
+    }
+
+    // Setup beforeunload interception - belt-and-suspenders approach
+    // The PRIMARY mechanism is Qt's javaScriptConfirm() override in PDFWebEnginePage
+    // which always returns true, completely blocking the browser's beforeunload dialog.
+    // This JS-side interception provides additional protection.
+    function setupBeforeUnloadInterception() {
+        // Intercept any attempts to set onbeforeunload
+        Object.defineProperty(window, 'onbeforeunload', {
+            get: function() { return null; },
+            set: function(handler) {
+                // Silently ignore - Qt handles unsaved changes via AnnotationStateTracker
+                return;
+            },
+            configurable: true
+        });
+
+        // Add highest-priority handler that prevents browser dialog
+        window.addEventListener('beforeunload', function(e) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            e.returnValue = '';
+            delete e.returnValue;
+            return undefined;
+        }, true);  // Use capture phase
     }
 
     // Setup all interceptors
@@ -368,6 +449,9 @@
             }
 
             const app = window.PDFViewerApplication;
+
+            // Setup beforeunload interception first
+            setupBeforeUnloadInterception();
 
             // Setup each interception independently with error handling
             const results = {

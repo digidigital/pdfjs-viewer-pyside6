@@ -7,14 +7,13 @@ import tempfile
 from pathlib import Path
 from typing import Optional, Tuple
 
-from PySide6.QtCore import QThread, Signal, QRunnable, QThreadPool, QObject, Qt, QTimer
-from PySide6.QtGui import QImage, QPainter, QPageLayout
-from PySide6.QtPrintSupport import QPrinter, QPrinterInfo
+from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QRadioButton, QButtonGroup, QSpinBox, QPushButton, QGroupBox,
-    QFileDialog, QWidget, QMessageBox, QLineEdit
+    QFileDialog, QWidget, QMessageBox, QLineEdit, QProgressBar
 )
+from PySide6.QtPrintSupport import QPrinterInfo
 
 from .print_translations import get_translation
 
@@ -28,7 +27,13 @@ class CustomPrintDialog(QDialog):
     - Page range selection (all or custom range)
     - Number of copies
     - Auto-detects default printer
+    - Progress bar for rendering progress
     """
+
+    # Signal emitted when user clicks Print button and settings are valid
+    print_requested = Signal(dict)  # settings dictionary
+    # Signal emitted when user requests cancellation during printing
+    cancel_requested = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None, total_pages: int = 1):
         """Initialize custom print dialog.
@@ -44,6 +49,7 @@ class CustomPrintDialog(QDialog):
         self.page_range: Tuple[int, int] = (1, total_pages)
         self.num_copies: int = 1
         self.output_path: Optional[str] = None
+        self._print_in_progress: bool = False
 
         # Get translations for current system language
         self.tr = get_translation()
@@ -101,6 +107,7 @@ class CustomPrintDialog(QDialog):
         self.from_page_spin.setMaximum(self.total_pages)
         self.from_page_spin.setValue(1)
         self.from_page_spin.setEnabled(False)
+        self.from_page_spin.setFixedWidth(70)  # Fixed width for ~5 digits
         self.from_page_spin.valueChanged.connect(self._on_from_page_changed)
         custom_range_layout.addWidget(self.from_page_spin)
 
@@ -112,6 +119,7 @@ class CustomPrintDialog(QDialog):
         self.to_page_spin.setMaximum(self.total_pages)
         self.to_page_spin.setValue(self.total_pages)
         self.to_page_spin.setEnabled(False)
+        self.to_page_spin.setFixedWidth(70)  # Fixed width for ~5 digits
         self.to_page_spin.valueChanged.connect(self._on_to_page_changed)
         custom_range_layout.addWidget(self.to_page_spin)
 
@@ -172,6 +180,15 @@ class CustomPrintDialog(QDialog):
         """)
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.status_label)
+
+        # Progress bar (hidden initially, shown during rendering)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.hide()  # Hidden until printing starts
+        layout.addWidget(self.progress_bar)
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -299,26 +316,14 @@ class CustomPrintDialog(QDialog):
         self.to_page_spin.setEnabled(checked)
 
     def _on_from_page_changed(self, value: int):
-        """Update 'To' page minimum when 'From' page changes.
-
-        This ensures the user cannot select an invalid range where From > To.
-        """
-        # Update minimum of "To" spin box to match current "From" value
+        """Update 'To' page minimum when 'From' page changes."""
         self.to_page_spin.setMinimum(value)
-
-        # If current "To" value is less than new "From" value, adjust it
         if self.to_page_spin.value() < value:
             self.to_page_spin.setValue(value)
 
     def _on_to_page_changed(self, value: int):
-        """Update 'From' page maximum when 'To' page changes.
-
-        This ensures the user cannot select an invalid range where From > To.
-        """
-        # Update maximum of "From" spin box to match current "To" value
+        """Update 'From' page maximum when 'To' page changes."""
         self.from_page_spin.setMaximum(value)
-
-        # If current "From" value is greater than new "To" value, adjust it
         if self.from_page_spin.value() > value:
             self.from_page_spin.setValue(value)
 
@@ -331,8 +336,6 @@ class CustomPrintDialog(QDialog):
             else:
                 from_page = self.from_page_spin.value()
                 to_page = self.to_page_spin.value()
-
-                # No validation needed - UI prevents invalid ranges
                 self.page_range = (from_page, to_page)
 
             # Get number of copies
@@ -351,6 +354,9 @@ class CustomPrintDialog(QDialog):
 
                 self.output_path = output_path
 
+            # Mark that printing has started
+            self._print_in_progress = True
+
             # Show status message at bottom of dialog
             self.status_label.setText(self.tr.get('print_sending', 'Sending data to printer...'))
             self.status_label.setStyleSheet("""
@@ -364,16 +370,20 @@ class CustomPrintDialog(QDialog):
                 }
             """)
 
+            # Show progress bar
+            self.progress_bar.setValue(0)
+            self.progress_bar.show()
+
             # Disable buttons to prevent double-click
             self.print_btn.setEnabled(False)
 
-            # Process events to show the status label
-            from PySide6.QtCore import QTimer
+            # Process events to show the status label and progress bar
             from PySide6.QtWidgets import QApplication
             QApplication.processEvents()
 
-            # Close dialog after 6 seconds
-            QTimer.singleShot(6000, self.accept)
+            # Emit signal with settings for external handling
+            settings = self.get_settings()
+            self.print_requested.emit(settings)
 
         except Exception as e:
             print(f"Error in print dialog: {e}")
@@ -383,17 +393,69 @@ class CustomPrintDialog(QDialog):
                 self.tr['error_msg'].format(error=str(e))
             )
 
-    def get_printer_info(self) -> Optional[QPrinterInfo]:
-        """Get QPrinterInfo for selected printer.
+    def get_settings(self) -> dict:
+        """Get current print settings."""
+        printer_info = self.get_printer_info()
+        return {
+            'accepted': True,
+            'print_to_pdf': self.print_to_pdf_file,
+            'printer_name': self.selected_printer,
+            'page_range': self.page_range,
+            'num_copies': self.num_copies,
+            'output_path': self.output_path,
+            'printer_available': printer_info is not None if not self.print_to_pdf_file else True
+        }
 
-        Returns:
-            QPrinterInfo object or None if printing to PDF
+    def is_print_in_progress(self) -> bool:
+        """Check if printing is currently in progress."""
+        return self._print_in_progress
+
+    def _update_progress_ui(self, current: int, total: int):
+        """Update the progress bar UI elements.
+
+        Args:
+            current: Current page being rendered (1-indexed)
+            total: Total number of pages to render
         """
+        if total > 0:
+            self.progress_bar.setMaximum(total)
+            self.progress_bar.setValue(current)
+
+        progress_text = self.tr.get(
+            'rendering_page',
+            'Rendering page {current} of {total}...'
+        ).format(current=current, total=total)
+        self.status_label.setText(progress_text)
+
+    def finish_printing(self, success: bool = True):
+        """Called when printing is complete to close the dialog.
+
+        Args:
+            success: Whether printing completed successfully
+        """
+        self._print_in_progress = False
+
+        if success:
+            self.accept()
+        else:
+            # Keep dialog open on failure so user can see error
+            self.print_btn.setEnabled(True)
+            self.progress_bar.hide()
+
+    def reject(self):
+        """Override reject to handle cancellation during printing."""
+        if self._print_in_progress:
+            self.cancel_requested.emit()
+            self._print_in_progress = False
+
+        super().reject()
+
+    def get_printer_info(self) -> Optional[QPrinterInfo]:
+        """Get QPrinterInfo for selected printer."""
         if self.print_to_pdf_file or not self.selected_printer:
             return None
 
         try:
-            # Iterate through available printers to find match
             for printer_info in QPrinterInfo.availablePrinters():
                 if printer_info.printerName() == self.selected_printer:
                     return printer_info
@@ -404,11 +466,7 @@ class CustomPrintDialog(QDialog):
 
 
 class TempFileManager:
-    """Manages temporary PDF files with automatic cleanup.
-
-    Creates a unique temp directory per app instance and ensures cleanup
-    on normal exit, crashes, or interruptions.
-    """
+    """Manages temporary PDF files with automatic cleanup."""
 
     def __init__(self):
         """Initialize temp file manager with unique directory."""
@@ -423,25 +481,15 @@ class TempFileManager:
             self._initialized = True
 
     def create_temp_pdf(self, data: bytes, original_name: str) -> Path:
-        """Create temp file with original filename in managed directory.
-
-        Args:
-            data: PDF file bytes
-            original_name: Original filename (will be sanitized)
-
-        Returns:
-            Path to created temp file
-        """
+        """Create temp file with original filename in managed directory."""
         self._ensure_initialized()
 
-        # Sanitize filename (keep only name, remove path)
         safe_name = Path(original_name).name
         if not safe_name:
             safe_name = "document.pdf"
 
         temp_path = self.temp_dir / safe_name
 
-        # Handle duplicates with counter
         counter = 1
         while temp_path.exists():
             stem = Path(safe_name).stem
@@ -449,12 +497,10 @@ class TempFileManager:
             temp_path = self.temp_dir / f"{stem}_{counter}{suffix}"
             counter += 1
 
-        # Write file
         try:
             temp_path.write_bytes(data)
             return temp_path
         except Exception as e:
-            # Clean up on write failure
             if temp_path.exists():
                 try:
                     temp_path.unlink()
@@ -463,10 +509,7 @@ class TempFileManager:
             raise IOError(f"Failed to write temp PDF file: {e}") from e
 
     def cleanup(self):
-        """Remove all temp files and directory.
-
-        Called automatically via atexit. Safe to call multiple times.
-        """
+        """Remove all temp files and directory."""
         if not self._initialized or not self.temp_dir:
             return
 
@@ -474,221 +517,10 @@ class TempFileManager:
             if self.temp_dir.exists():
                 shutil.rmtree(self.temp_dir, ignore_errors=True)
         except Exception:
-            pass  # Silent cleanup failure
+            pass
 
         self._initialized = False
         self.temp_dir = None
-
-
-class PrintWorkerSignals(QObject):
-    """Signals for PrintWorker thread."""
-    progress = Signal(int, int)  # current_page, total_pages
-    finished = Signal(bool)  # success
-    error = Signal(str)  # error_message
-
-
-class PageRenderTask(QRunnable):
-    """Runnable task for rendering a single PDF page."""
-
-    def __init__(self, pdf_bytes: bytes, page_num: int, dpi: int, signals: QObject):
-        super().__init__()
-        self.pdf_bytes = pdf_bytes
-        self.page_num = page_num
-        self.dpi = dpi
-        self.signals = signals
-        self.result: Optional[QImage] = None
-        self.error: Optional[str] = None
-
-    def run(self):
-        """Render the page to QImage."""
-        try:
-            import pypdfium2 as pdfium
-
-            # Open PDF from bytes
-            pdf = pdfium.PdfDocument(self.pdf_bytes)
-
-            # Get page
-            page = pdf.get_page(self.page_num)
-
-            # Render at specified DPI
-            bitmap = page.render(scale=self.dpi / 72.0)
-            pil_image = bitmap.to_pil()
-
-            # Convert to QImage
-            # PIL image is RGB, convert to QImage
-            width, height = pil_image.size
-            bytes_data = pil_image.tobytes("raw", "RGB")
-
-            self.result = QImage(bytes_data, width, height, width * 3, QImage.Format.Format_RGB888).copy()
-
-            page.close()
-            pdf.close()
-
-        except Exception as e:
-            self.error = f"Page {self.page_num + 1}: {str(e)}"
-
-
-class PrintWorker(QThread):
-    """Worker thread for printing PDF with Qt print dialog.
-
-    Renders pages using pypdfium2 and prints to QPrinter.
-    Supports parallel page rendering for improved performance.
-    """
-
-    progress = Signal(int, int)  # current_page, total_pages
-    finished = Signal(bool)  # success
-    error = Signal(str)  # error_message
-
-    def __init__(
-        self,
-        pdf_data: bytes,
-        printer: QPrinter,
-        dpi: int = 300,
-        fit_to_page: bool = True,
-        parallel_pages: int = 4,
-        from_page: Optional[int] = None,
-        to_page: Optional[int] = None,
-    ):
-        """Initialize print worker.
-
-        Args:
-            pdf_data: PDF file bytes
-            printer: Configured QPrinter instance
-            dpi: Rendering DPI (higher = better quality, slower)
-            fit_to_page: Scale to fit page vs actual size
-            parallel_pages: Number of pages to render in parallel
-            from_page: First page to print (1-indexed), None for all
-            to_page: Last page to print (1-indexed, inclusive), None for all
-        """
-        super().__init__()
-        self.pdf_data = pdf_data
-        self.printer = printer
-        self.dpi = dpi
-        self.fit_to_page = fit_to_page
-        self.parallel_pages = max(1, parallel_pages)
-        self.from_page = from_page
-        self.to_page = to_page
-        self._interrupted = False
-
-    def run(self):
-        """Execute print job."""
-        try:
-            # Check if pypdfium2 is available
-            try:
-                import pypdfium2 as pdfium
-            except ImportError:
-                self.error.emit(
-                    "pypdfium2 is not installed. "
-                    "Please install it: pip install pypdfium2"
-                )
-                self.finished.emit(False)
-                return
-
-            # Open PDF
-            pdf = pdfium.PdfDocument(self.pdf_data)
-            page_count = len(pdf)
-
-            if page_count == 0:
-                self.error.emit("PDF document is empty")
-                self.finished.emit(False)
-                return
-
-            # Get print range (use custom range if provided, otherwise all pages)
-            if self.from_page is not None and self.to_page is not None:
-                # Custom range from dialog (1-indexed)
-                from_page = max(0, self.from_page - 1)
-                to_page = min(page_count - 1, self.to_page - 1)
-            elif self.printer.printRange() == QPrinter.PrintRange.PageRange:
-                # Range from printer settings (legacy)
-                from_page = max(0, self.printer.fromPage() - 1)
-                to_page = min(page_count - 1, self.printer.toPage() - 1)
-            else:
-                # All pages
-                from_page = 0
-                to_page = page_count - 1
-
-            # Start painter
-            painter = QPainter(self.printer)
-
-            if not painter.isActive():
-                self.error.emit("Failed to start printer")
-                self.finished.emit(False)
-                return
-
-            # Print pages
-            for page_idx in range(from_page, to_page + 1):
-                if self._interrupted or self.isInterruptionRequested():
-                    painter.end()
-                    self.finished.emit(False)
-                    return
-
-                # Emit progress
-                self.progress.emit(page_idx - from_page + 1, to_page - from_page + 1)
-
-                try:
-                    # Render page
-                    page = pdf.get_page(page_idx)
-
-                    # Get page dimensions
-                    page_width, page_height = page.get_size()
-
-                    # Determine orientation
-                    if page_width > page_height:
-                        self.printer.setPageOrientation(QPageLayout.Orientation.Landscape)
-                    else:
-                        self.printer.setPageOrientation(QPageLayout.Orientation.Portrait)
-
-                    # Render page to bitmap
-                    bitmap = page.render(scale=self.dpi / 72.0)
-                    pil_image = bitmap.to_pil()
-
-                    # Convert to QImage
-                    width, height = pil_image.size
-                    bytes_data = pil_image.tobytes("raw", "RGB")
-                    q_image = QImage(bytes_data, width, height, width * 3, QImage.Format.Format_RGB888)
-
-                    # Get printer page size
-                    page_rect = self.printer.pageRect(QPrinter.Unit.DevicePixel)
-
-                    if self.fit_to_page:
-                        # Scale to fit
-                        from PySide6.QtCore import Qt
-                        scaled_image = q_image.scaled(
-                            int(page_rect.width()),
-                            int(page_rect.height()),
-                            Qt.AspectRatioMode.KeepAspectRatio,
-                            Qt.TransformationMode.SmoothTransformation
-                        )
-                        painter.drawImage(0, 0, scaled_image)
-                    else:
-                        # Draw at actual size
-                        painter.drawImage(0, 0, q_image)
-
-                    page.close()
-
-                    # New page if not last
-                    if page_idx < to_page:
-                        if not self.printer.newPage():
-                            raise Exception("Failed to create new page")
-
-                except Exception as e:
-                    # Log error but continue with next page
-                    self.error.emit(f"Error printing page {page_idx + 1}: {str(e)}")
-
-            # Finish
-            painter.end()
-            pdf.close()
-
-            self.finished.emit(True)
-
-        except Exception as e:
-            self.error.emit(f"Print job failed: {str(e)}")
-            self.finished.emit(False)
-
-    def stop(self):
-        """Request thread interruption."""
-        self._interrupted = True
-        self.requestInterruption()
 
 
 # Global temp file manager instance
@@ -696,11 +528,7 @@ _temp_file_manager: Optional[TempFileManager] = None
 
 
 def get_temp_file_manager() -> TempFileManager:
-    """Get or create global temp file manager instance.
-
-    Returns:
-        TempFileManager singleton instance
-    """
+    """Get or create global temp file manager instance."""
     global _temp_file_manager
     if _temp_file_manager is None:
         _temp_file_manager = TempFileManager()
@@ -732,30 +560,21 @@ def export_pdf_pages(pdf_data: bytes, output_path: str, from_page: int, to_page:
         )
 
     try:
-        # Open PDF from bytes
         pdf_input = io.BytesIO(pdf_data)
-        pdf = pikepdf.open(pdf_input)
+        with pikepdf.open(pdf_input) as pdf:
+            pdf_output = pikepdf.new()
+            try:
+                total_pages = len(pdf.pages)
+                from_page = max(1, min(from_page, total_pages))
+                to_page = max(from_page, min(to_page, total_pages))
 
-        # Create output PDF
-        pdf_output = pikepdf.new()
+                for page_num in range(from_page - 1, to_page):
+                    pdf_output.pages.append(pdf.pages[page_num])
 
-        # Validate page range
-        total_pages = len(pdf.pages)
-        from_page = max(1, min(from_page, total_pages))
-        to_page = max(from_page, min(to_page, total_pages))
-
-        # Copy selected pages (convert to 0-indexed)
-        for page_num in range(from_page - 1, to_page):
-            pdf_output.pages.append(pdf.pages[page_num])
-
-        # Save output
-        pdf_output.save(output_path)
-
-        # Close PDFs
-        pdf.close()
-        pdf_output.close()
-
-        return True
+                pdf_output.save(output_path)
+                return True
+            finally:
+                pdf_output.close()
 
     except Exception as e:
         print(f"Error exporting PDF pages: {e}")
