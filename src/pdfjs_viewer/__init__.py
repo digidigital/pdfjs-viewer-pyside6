@@ -4,7 +4,7 @@ A production-ready, embeddable PDF viewer widget powered by Mozilla's PDF.js.
 Supports viewing, annotating, saving, and printing PDFs with full feature control.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.1.2"
 
 from .config import (
     ConfigPresets,

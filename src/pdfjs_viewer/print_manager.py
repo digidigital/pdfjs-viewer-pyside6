@@ -235,10 +235,7 @@ class PrintManager(QObject):
 
         In a normal Python environment, ``python -m pdfjs_viewer.print_process``
         is used.
-
-        Returns:
-            (executable, args) tuple for ``QProcess.start()``.
-        """
+        """     
         if getattr(sys, 'frozen', False):
             if not _freeze_support_called:
                 logger.warning(
@@ -247,7 +244,15 @@ class PrintManager(QObject):
                     "frozen apps.  Add pdfjs_viewer.freeze_support() at "
                     "the start of your main()."
                 )
-            return (sys.executable, [self._socket_name])
+            # Point to frozen executable    
+            executable = sys.executable
+            
+            # If frozen and in AppImage point to AppImage
+            appimage = os.environ.get('APPIMAGE')
+            if appimage:
+                executable = appimage
+            
+            return (executable, [self._socket_name])
         else:
             return (sys.executable, ['-m', 'pdfjs_viewer.print_process', self._socket_name])
 

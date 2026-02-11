@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdfjs-viewer-pyside6"
-version = "1.1.0"
+version = "1.1.2"
 description = "PDF.js-based PDF viewer widget for PySide6 with annotation support"
 readme = "README.md"
 authors = [
@@ -48,11 +48,12 @@ Repository = "https://github.com/digidigital/pdfjs-viewer-pyside6"
 "Bug Tracker" = "https://github.com/digidigital/pdfjs-viewer-pyside6/issues"
 
 [project.entry-points."pyinstaller40"]
-hook-dirs = "pdfjs_viewer.__pyinstaller:get_hook_dirs"
+hook-dirs = "_pdfjs_viewer_pyinstaller:get_hook_dirs"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 include-package-data = true
+py-modules = ["_pdfjs_viewer_pyinstaller"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
