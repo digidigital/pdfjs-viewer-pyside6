@@ -139,7 +139,7 @@ viewer = PDFViewerWidget(config=config)
 You can initialize the widget with a customized version of PDF.js
 ```python
 viewer = PDFViewerWidget(
-    pdfjs_path="/path/to/custom/pdfjs-5.5.0-dist"
+    pdfjs_path="/path/to/custom/pdfjs-5.6.0-dist"
 )
 ```
 This "should" work fine for minor releases or cosmetic changes and will most likely break for major releases.
@@ -706,7 +706,7 @@ dist/your_app/
 
 ## PDF.js Version
 
-This package bundles PDF.js version **5.4.530** (Apache License 2.0).
+This package bundles PDF.js version **5.5.207 Legacy** (Apache License 2.0).
 
 ## License
 
@@ -742,6 +742,11 @@ Contributions are welcome! Please open an issue or pull request on GitHub.
 - **Documentation**: Full API documentation available in source code
 
 ## Changelog
+
+### v1.1.3 (2026-03-06)
+
+#### Improvements
+- PDF.js updated to 5.5.207 legacy
 
 ### v1.1.0 (2026-02-02)
 
