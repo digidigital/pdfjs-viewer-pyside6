@@ -206,15 +206,13 @@ class InProcessBackend(ViewerBackend):
     def _setup_web_view(self):
         """Setup the QWebEngineView with safe stability defaults."""
         from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings
-        import uuid
 
-        # Always create isolated profile with unique name for stability
-        profile_name = f"pdfjs_viewer_{uuid.uuid4().hex[:8]}"
-        profile = QWebEngineProfile(profile_name, self.parent())
-
-        # Disable cache and persistent storage
-        profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
-        profile.setPersistentStoragePath("")
+        # Use an Off-the-Record profile (no name argument) so Qt never writes
+        # any directory to disk.  Named profiles always create a persistent
+        # directory under AppDataLocation/QtWebEngine/<name>/ regardless of
+        # NoCache / setPersistentStoragePath settings, and the UUID suffix
+        # would accumulate orphaned directories on every start.
+        profile = QWebEngineProfile(self.parent())
 
         # Create secure page with profile
         secure_page = self.security_manager.create_page(profile=profile, parent=self.parent())
