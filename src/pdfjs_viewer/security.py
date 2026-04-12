@@ -1,5 +1,7 @@
 """Security manager for QWebEngineView and PDF viewer."""
 
+import platform
+import subprocess
 from typing import Optional
 
 from PySide6.QtCore import QUrl
@@ -11,8 +13,55 @@ from PySide6.QtWebEngineCore import (
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QMessageBox
 
+from ._platform_utils import _get_clean_subprocess_env
 from .config import PDFSecurityConfig
 from .ui_translations import get_translations
+
+
+def _open_url_safely(url: QUrl, handler=None) -> None:
+    """Open a URL using a system handler that is safe in frozen / AppImage builds.
+
+    Priority:
+      1. ``handler`` callback (if provided by the caller via PDFSecurityConfig)
+      2. subprocess + xdg-open/open with cleaned LD_LIBRARY_PATH (frozen builds)
+      3. QDesktopServices.openUrl() (non-frozen desktop and Windows)
+
+    Args:
+        url: The URL to open.
+        handler: Optional callable passed from PDFSecurityConfig.open_url_handler.
+    """
+    if handler is not None:
+        handler(url)
+        return
+
+    clean_env = _get_clean_subprocess_env()
+    if clean_env is not None:
+        # Frozen context (PyInstaller / AppImage): spawn system handler with a
+        # clean library-path environment so the browser/mailer is not affected
+        # by bundled libraries.
+        url_str = url.toString()
+        system = platform.system()
+        try:
+            if system == 'Linux':
+                subprocess.Popen(
+                    ['xdg-open', url_str],
+                    env=clean_env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            elif system == 'Darwin':
+                subprocess.Popen(
+                    ['open', url_str],
+                    env=clean_env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            else:
+                QDesktopServices.openUrl(url)
+        except Exception:
+            QDesktopServices.openUrl(url)
+    else:
+        QDesktopServices.openUrl(url)
 
 
 class PDFWebEnginePage(QWebEnginePage):
@@ -115,9 +164,9 @@ class PDFWebEnginePage(QWebEnginePage):
                     dialog.setDefaultButton(open_btn)
                     dialog.exec()
                     if dialog.clickedButton() == open_btn:
-                        QDesktopServices.openUrl(url)
+                        _open_url_safely(url, self.security_config.open_url_handler)
                 else:
-                    QDesktopServices.openUrl(url)
+                    _open_url_safely(url, self.security_config.open_url_handler)
                 return False
 
             # Allow loading remote content if configured

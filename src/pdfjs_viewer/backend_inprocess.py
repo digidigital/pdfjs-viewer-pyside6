@@ -20,6 +20,7 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 from .viewer_backend import ViewerBackend, register_backend
 from .bridge import PDFJavaScriptBridge
 from .config import PDFViewerConfig, PrintHandler
+from ._platform_utils import _get_clean_subprocess_env
 from .print_utils import get_temp_file_manager
 from .print_manager import PrintManager
 from .resources import PDFResourceManager
@@ -47,54 +48,6 @@ def _get_real_home_directory() -> str:
 
     # Fall back to standard home directory (works on all platforms)
     return str(Path.home())
-
-
-def _get_clean_subprocess_env():
-    """Get a clean environment for spawning system subprocesses.
-
-    PyInstaller injects LD_LIBRARY_PATH (Linux) and DYLD_LIBRARY_PATH /
-    DYLD_FRAMEWORK_PATH (macOS) pointing to its bundled libraries.  Child
-    processes such as xdg-open or open inherit these variables, which can
-    cause the system PDF viewer to load incompatible libraries and fail.
-
-    PyInstaller stores the original values as ``*_ORIG`` environment
-    variables.  This function restores them so that child processes see
-    the user's original library paths.
-
-    Returns:
-        A cleaned copy of ``os.environ``, or ``None`` if no cleaning is
-        needed (unfrozen environment or Windows).
-    """
-    if not getattr(sys, 'frozen', False):
-        return None
-
-    system = platform.system()
-    if system == 'Windows':
-        return None
-
-    env = os.environ.copy()
-
-    if system == 'Linux':
-        vars_to_clean = ['LD_LIBRARY_PATH']
-    elif system == 'Darwin':
-        vars_to_clean = ['DYLD_LIBRARY_PATH', 'DYLD_FRAMEWORK_PATH']
-    else:
-        return None
-
-    for var in vars_to_clean:
-        orig_key = f'{var}_ORIG'
-        if orig_key in env:
-            orig_value = env[orig_key]
-            if orig_value:
-                env[var] = orig_value
-            else:
-                env.pop(var, None)
-            env.pop(orig_key, None)
-        elif var in env:
-            # No _ORIG means it was not set before PyInstaller — remove
-            env.pop(var, None)
-
-    return env
 
 
 class CustomWebEngineView(QWebEngineView):
@@ -759,6 +712,14 @@ class InProcessBackend(ViewerBackend):
             self._pending_load = {'type': 'show_blank_page'}
             return
 
+        # Handle unsaved changes before clearing the document,
+        # identical to what load_pdf() does before loading a new file.
+        result = self._handle_unsaved_before_action({'type': 'show_blank_page'})
+        if result == 'deferred':
+            return  # _execute_pending_action will call show_blank_page() again
+        if result == 'cancelled':
+            return
+
         # Clean up temp file when closing PDF
         self._cleanup_temp_pdf()
 
@@ -770,10 +731,9 @@ class InProcessBackend(ViewerBackend):
         self._annotation_tracker.reset()
 
         # Reload viewer with empty file parameter to prevent demo PDF from loading
-        # PDF.js loads "compressed.tracemonkey-pldi-09.pdf" by default if no file param
         viewer_url = self.resource_manager.get_viewer_url()
         query = QUrlQuery()
-        query.addQueryItem('file', '')  # Empty file parameter prevents default PDF
+        query.addQueryItem('file', '')
         viewer_qurl = QUrl(viewer_url)
         viewer_qurl.setQuery(query)
         self.web_view.setUrl(viewer_qurl)
@@ -1701,6 +1661,28 @@ class InProcessBackend(ViewerBackend):
             extra_deadline = time.monotonic() + 0.2  # 200ms for bridge propagation
             while time.monotonic() < extra_deadline:
                 QApplication.processEvents()
+
+    def exit_annotation_edit_mode(self) -> None:
+        """Commit any in-progress annotation without navigating or saving.
+
+        Dispatches switchannotationeditormode(0) to PDF.js. This terminates the
+        active annotation editor (if any), writes the annotation to
+        AnnotationStorage, and fires the bridge signal that updates
+        AnnotationStateTracker. After this call has_unsaved_changes() reflects
+        the committed annotation.
+
+        **When to call this:** only when implementing a custom unsaved-changes
+        dialog that calls has_unsaved_changes() directly. All pdfjs_viewer action
+        boundaries (load_pdf, show_blank_page, closeEvent / handle_unsaved_changes)
+        already call this internally — an extra call there is redundant.
+
+        Note: has_unsaved_changes() intentionally does NOT call this automatically
+        because doing so would silently terminate an annotation the user is
+        currently drawing.
+
+        Safe to call at any time; a no-op if no annotation is in edit mode.
+        """
+        self._exit_annotation_edit_mode()
 
     def has_unsaved_changes(self) -> bool:
         """Check if document has unsaved annotations.

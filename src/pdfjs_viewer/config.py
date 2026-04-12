@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List
+from typing import Callable, List, Optional
 
 class PrintHandler(str, Enum):
     """Print handler options.
@@ -100,6 +100,13 @@ class PDFSecurityConfig:
 
     # Content Security Policy (optional custom CSP)
     custom_csp: str = None
+
+    # Optional custom URL opener. Receives a QUrl and is responsible for
+    # opening it in the appropriate viewer or browser. When None (default)
+    # the built-in safe opener is used, which handles PyInstaller / AppImage
+    # environments transparently. Set this only when you need application-
+    # specific behaviour beyond what the default provides.
+    open_url_handler: Optional[Callable] = None
 
 
 @dataclass

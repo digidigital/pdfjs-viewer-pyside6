@@ -224,6 +224,15 @@ class PDFViewerWidget(QWidget):
         """
         self.backend.show_blank_page()
 
+    def exit_annotation_edit_mode(self) -> None:
+        """Commit any in-progress annotation without saving or navigating.
+
+        See InProcessBackend.exit_annotation_edit_mode() for full semantics.
+        Only needed when implementing a custom unsaved-changes dialog that calls
+        has_unsaved_changes() outside pdfjs_viewer's normal action boundaries.
+        """
+        self.backend.exit_annotation_edit_mode()
+
     def print_pdf(self):
         """Trigger print for current PDF.
 

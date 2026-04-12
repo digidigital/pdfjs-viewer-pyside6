@@ -153,7 +153,8 @@ Main widget class for viewing PDFs.
 #### Methods
 
 - `load_pdf(source: str | Path | bytes)` - Load PDF from file path or bytes
-- `show_blank_page()` - Show empty viewer (respects current theme)
+- `show_blank_page()` - Show empty viewer (respects current theme and `unsaved_changes_action` policy)
+- `exit_annotation_edit_mode()` - Commit any in-progress annotation stroke; call before `has_unsaved_changes()` when implementing a custom unsaved-changes dialog outside pdfjs_viewer's action boundaries
 - `save_pdf(output_path: str = None) -> bytes` - Save PDF with annotations
 - `print_pdf()` - Trigger print dialog
 - `get_pdf_data() -> bytes` - Get current PDF data with annotations
@@ -224,6 +225,7 @@ PDFSecurityConfig(
     block_remote_content: bool = True,
     allowed_protocols: List[str] = ["http", "https"],
     custom_csp: str = None,  # Optional custom Content Security Policy
+    open_url_handler: Optional[Callable] = None,  # Custom URL opener; None = built-in safe opener
 )
 ```
 
@@ -631,6 +633,18 @@ if viewer.handle_unsaved_changes():
     pass
 ```
 
+When implementing a **custom** unsaved-changes dialog that calls `has_unsaved_changes()` directly, commit any in-progress annotation first so the result is accurate:
+
+```python
+# Commit any annotation the user is currently drawing before checking
+viewer.exit_annotation_edit_mode()
+if viewer.has_unsaved_changes():
+    # show your own dialog …
+    pass
+```
+
+> **Note:** `exit_annotation_edit_mode()` is only needed for custom dialogs. All built-in action boundaries (`load_pdf`, `show_blank_page`, `closeEvent`, `handle_unsaved_changes`) call it internally.
+
 ### Translations
 
 The dialog is translated in 21 languages, matching the print dialog translations.
@@ -742,6 +756,16 @@ Contributions are welcome! Please open an issue or pull request on GitHub.
 - **Documentation**: Full API documentation available in source code
 
 ## Changelog
+
+### v1.2.0 (2026-04-12)
+
+#### New Features
+- **`exit_annotation_edit_mode()`**: New `PDFViewerWidget` method that commits any annotation currently being drawn; needed only when calling `has_unsaved_changes()` directly from a custom dialog outside pdfjs_viewer's own action boundaries
+- **`open_url_handler`**: New optional `Callable` field on `PDFSecurityConfig` for application-specific URL-opening behaviour; the built-in default opens external links safely in PyInstaller/AppImage builds using a clean subprocess environment, avoiding library-path contamination
+
+#### Bug Fixes
+- `show_blank_page()` now honours the configured `unsaved_changes_action` policy (prompt / auto-save / discard) before clearing the viewer; previously annotations were silently discarded regardless of the configured policy
+- External links opened in frozen (PyInstaller / AppImage) builds no longer inherit bundled `LD_LIBRARY_PATH` / `DYLD_*` paths, preventing silent browser and mailer launch failures
 
 ### v1.1.4 (2026-04-06)
 
