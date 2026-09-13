@@ -139,7 +139,7 @@ viewer = PDFViewerWidget(config=config)
 You can initialize the widget with a customized version of PDF.js
 ```python
 viewer = PDFViewerWidget(
-    pdfjs_path="/path/to/custom/pdfjs-5.6.0-dist"
+    pdfjs_path="/path/to/custom/pdfjs-6.3.289-legacy-dist"
 )
 ```
 This "should" work fine for minor releases or cosmetic changes and will most likely break for major releases.
@@ -720,7 +720,7 @@ dist/your_app/
 
 ## PDF.js Version
 
-This package bundles PDF.js version **5.6.205 Legacy** (Apache License 2.0).
+This package bundles PDF.js version **6.3.289 Legacy** (Apache License 2.0).
 
 ## License
 
@@ -756,6 +756,20 @@ Contributions are welcome! Please open an issue or pull request on GitHub.
 - **Documentation**: Full API documentation available in source code
 
 ## Changelog
+
+### v1.3.0 (2026-08-25)
+
+#### Improvements
+- PDF.js updated to **6.3.289 legacy** (from 5.6.205)
+- **Presentation mode is now functional**: with `presentation_mode=True` the toolbar button previously appeared but could not enter presentation mode, because QtWebEngine reports `document.fullscreenEnabled` as `false` unless fullscreen support is enabled explicitly - PDF.js therefore never constructed its `PDFPresentationMode` instance. Fullscreen support is now enabled and fullscreen requests are accepted, so presentation mode works. It renders within the widget's bounds; connect your own slot to `page.fullScreenRequested` in addition if you want it to fill the entire screen.
+- `get_pdfjs_version()` now reports the bundled PDF.js version instead of `"unknown"` (a `VERSION` file is shipped alongside the bundled PDF.js)
+- The PDF.js demo PDF is no longer shipped in the wheel (it was already excluded from the sdist), reducing the installed package by roughly 1 MB
+
+#### Bug Fixes
+- The viewer no longer opens the bundled PDF.js demo document on startup. The initial page load did not pass an empty `file` parameter, so PDF.js fell back to its `defaultUrl` option and silently loaded the sample PDF until the application loaded a document of its own
+
+#### Internal
+- Feature-control styling is now applied through constructable stylesheets (`adoptedStyleSheets`) instead of injected `<style>` elements. PDF.js 6.x ships a `style-src 'self'` Content-Security-Policy in `viewer.html` which silently blocks inline styles; without this change the `presentation_mode` and `stamp_alttext_enabled=False` toolbar rules would have stopped taking effect. A `<style>` fallback is retained, so pointing `pdfjs_path` at an older PDF.js 5.x build keeps working.
 
 ### v1.2.0 (2026-04-12)
 

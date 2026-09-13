@@ -153,6 +153,27 @@ pdfjs-document-properties-linearized = ਤੇਜ਼ ਵੈੱਬ ਝਲਕ:
 pdfjs-document-properties-linearized-yes = ਹਾਂ
 pdfjs-document-properties-linearized-no = ਨਹੀਂ
 pdfjs-document-properties-close-button = ਬੰਦ ਕਰੋ
+pdfjs-digital-signature-properties-view-certificate = ਸਰਟੀਫਿਕੇਟ ਨੂੰ ਵੇਖੋ
+# Shown beneath an invalid signature card to explain why verification
+# failed. The text comes from NSS (e.g. "Signature integrity has been
+# compromised", "PKCS#7 signature could not be parsed") and is not
+# itself localized — it is the underlying error message produced by
+# the verification backend.
+# Variables:
+#   $reason (String) - error message describing why the signature
+#                      could not be verified.
+pdfjs-digital-signature-properties-reason = ਕਾਰਨ: { $reason }
+# Variables:
+#   $dateObj (Date) - the signing time from the /Sig dict's /M entry.
+pdfjs-digital-signature-properties-timestamp = ਸਮਾਂ: { DATETIME($dateObj, dateStyle: "short", timeStyle: "medium") }
+# Variables:
+#   $count (Number) - number of nested sub-signatures (one per earlier
+#                     incremental revision of the document).
+pdfjs-digital-signature-properties-sub-signatures =
+    { $count ->
+        [one] ਅਧੀਨ-ਦਸਤਖ਼ਤ ({ $count })
+       *[other] ਅਧੀਨ-ਦਸਤਖ਼ਤ({ $count })
+    }
 
 ## Print
 
@@ -205,10 +226,6 @@ pdfjs-thumb-page-canvas =
 #   $page (Number) - the page number
 pdfjs-thumb-page-checkbox1 =
     .title = { $page } ਸਫ਼ੇ ਨੂੰ ਚੁਣੋ
-# Variables:
-#   $page (Number) - the page number
-pdfjs-thumb-page-checkbox =
-    .aria-label = { $page } ਸਫ਼ੇ ਨੂੰ ਚੁਣੋ
 # Variables:
 #   $page (Number) - the page number
 #   $total (Number) - the number of pages
@@ -654,12 +671,9 @@ pdfjs-editor-add-comment-button =
 ##  - layers.
 ## The thumbnails view is used to edit the pdf: remove/insert pages, ...
 
-pdfjs-toggle-views-manager-button =
-    .title = ਬਾਹੀ ਬਦਲੋ
 pdfjs-toggle-views-manager-notification-button =
     .title = ਬਾਹੀ ਨੂੰ ਬਦਲੋ (ਦਸਤਾਵੇਜ਼ ਥੰਮਨੇਲ/ਆਨਲਾਈਨਅਟੈਚਮੈਂਟ/ਪਰਤਾਂ ਰੱਖਦਾ ਹੈ)
 pdfjs-toggle-views-manager-button1-label = ਸਫ਼ਿਆਂ ਦਾ ਇੰਤਜ਼ਾਮ
-pdfjs-toggle-views-manager-button-label = ਬਾਹੀ ਨੂੰ ਬਦਲੋ
 pdfjs-views-manager-sidebar =
     .aria-label = ਬਾਹੀ
 pdfjs-views-manager-sidebar-resizer =
@@ -668,9 +682,11 @@ pdfjs-views-manager-view-selector-button =
     .title = ਵੇਖੋ
 pdfjs-views-manager-view-selector-button-label = ਵੇਖੋ
 pdfjs-views-manager-pages-title = ਸਫ਼ੇ
-pdfjs-views-manager-outlines-title = ਦਸਤਾਵੇਜ਼ ਆਉਟਲਾਈਨ
+pdfjs-views-manager-outlines-title1 = ਦਸਤਾਵੇਜ਼ ਖਾਕਾ
+    .title = ਦਸਤਾਵੇਜ਼ ਖਾਕਾ (ਸਾਰੀਆਂ ਚੀਜ਼ਾਂ ਨੂੰ ਫੈਲਾਉਣ/ਸਮੇਟਣ ਲਈ ਦੋ ਵਾਰ ਕਲਿੱਕ ਕਰੋ)
 pdfjs-views-manager-attachments-title = ਅਟੈਚਮੈਂਟਾਂ
-pdfjs-views-manager-layers-title = ਪਰਤਾਂ
+pdfjs-views-manager-layers-title1 = ਲੇਅਰ
+    .title = ਲੇਅਰ (ਸਾਰੀਆਂ ਲੇਅਰਾਂ ਨੂੰ ਮੂਲ ਹਾਲਤ ਵਿੱਚ ਲੈ ਜਾਣ ਲਈ ਦੋ ਵਾਰ ਕਲਿੱਕ ਕਰੋ)
 pdfjs-views-manager-pages-option-label = ਸਫ਼ੇ
 pdfjs-views-manager-outlines-option-label = ਦਸਤਾਵੇਜ਼ ਆਉਟਲਾਈਨ
 pdfjs-views-manager-attachments-option-label = ਅਟੈਚਮੈਂਟਾਂ
@@ -690,7 +706,7 @@ pdfjs-views-manager-pages-status-action-button-label = ਬੰਦੋਬਸਤ
 pdfjs-views-manager-pages-status-copy-button-label = ਕਾਪੀ ਕਰੋ
 pdfjs-views-manager-pages-status-cut-button-label = ਕੱਟੋ
 pdfjs-views-manager-pages-status-delete-button-label = ਹਟਾਓ
-pdfjs-views-manager-pages-status-save-as-button-label = …ਵਜੋਂ ਸੰਭਾਲੋ
+pdfjs-views-manager-pages-status-export-selected-button-label = …ਚੁਣੇ ਨੂੰ ਐਕਸਪੋਰਟ ਕਰੋ
 # Variables:
 #   $count (Number) - the number of selected pages to be cut.
 pdfjs-views-manager-status-undo-cut-label =
@@ -730,8 +746,80 @@ pdfjs-views-manager-paste-button-before =
 #   $page (Number) - the page number after which the paste button is.
 pdfjs-views-manager-paste-button-after =
     .title = { $page } ਸਫ਼ੇ ਦੇ ਬਾਅਦ ਚੇਪੋ
+# Badge used to promote a new feature in the UI, keep it as short as possible.
+# It's spelled uppercase for English, but it can be translated as usual.
+pdfjs-new-badge-content = ਨਵਾਂ
+pdfjs-views-manager-waiting-for-file = …ਫ਼ਾਇਲ ਨੂੰ ਅੱਪਲੋਡ ਕੀਤਾ ਜਾ ਰਿਹਾ ਹੈ
 pdfjs-toggle-views-manager-button1 =
     .title = ਸਫ਼ਿਆਂ ਦਾ ਇੰਤਜ਼ਾਮ
+
+## Digital signature properties (signature verification panel)
+
+pdfjs-digital-signature-properties-button =
+    .title = ਡਿਜੀਟਲ ਦਸਤਖਤ ਵਿਸ਼ੇਸ਼ਤਾਵਾਂ
+    .aria-label = ਡਿਜੀਟਲ ਦਸਤਖਤ ਵਿਸ਼ੇਸ਼ਤਾਵਾਂ
+pdfjs-digital-signature-properties-button-label = ਡਿਜੀਟਲ ਦਸਤਖਤ ਵਿਸ਼ੇਸ਼ਤਾਵਾਂ
+
+## Banner shown above the signature list summarising the overall
+## verification state of the document. Each variant is selected by the
+## viewer based on the worst per-signature status; one signature is
+## enough to lower the banner.
+##
+## Variables:
+##   $count (Number) - number of signatures at the worst level.
+
+pdfjs-digital-signature-properties-banner-verified = ਦਸਤਾਵੇਜ਼ ਨੂੰ ਵਾਜਬ ਡਿਜੀਟਲ ਦਸਤਖ਼ਤਾਂ ਨਾਲ ਸਾਈਨ ਕੀਤਾ ਗਿਆ ਸੀ
+pdfjs-digital-signature-properties-banner-unknown =
+    { $count ->
+        [one] ਦਸਤਾਵੇਜ਼ ਨੂੰ ਸਾਈਨ ਤਾਂ ਕੀਤਾ ਗਿਆ ਸੀ ਪਰ { $count } ਡਿਜੀਟਲ ਦਸਤਖ਼ਤ ਨੂੰ ਤਸਦੀਕ ਨਹੀਂ ਕੀਤਾ ਜਾ ਸਕਿਆ
+       *[other] ਦਸਤਾਵੇਜ਼ ਨੂੰ ਸਾਈਨ ਤਾਂ ਕੀਤਾ ਗਿਆ ਸੀ ਪਰ { $count } ਡਿਜੀਟਲ ਦਸਤਖ਼ਤਾਂ ਨੂੰ ਤਸਦੀਕ ਨਹੀਂ ਕੀਤਾ ਜਾ ਸਕਿਆ
+    }
+pdfjs-digital-signature-properties-banner-untrusted =
+    { $count ->
+        [one] ਦਸਤਾਵੇਜ਼ ਨੂੰ { $count } ਸਰਟੀਫਿਕੇਟ ਨਾਲ ਸਾਈਨ ਕੀਤਾ ਗਿਆ ਸੀ, ਜੋ ਭਰੋਸੇਯੋਗ ਨਹੀਂ ਹੈ
+       *[other] ਦਸਤਾਵੇਜ਼ ਨੂੰ { $count } ਸਰਟੀਫਿਕੇਟਾਂ ਨਾਲ ਸਾਈਨ ਕੀਤਾ ਗਿਆ ਸੀ, ਜੋ ਭਰੋਸੇਯੋਗ ਨਹੀਂ ਹਨ
+    }
+pdfjs-digital-signature-properties-banner-expired =
+    { $count ->
+        [one] ਦਸਤਾਵੇਜ਼ ਨੂੰ { $count } ਮਿਆਦ ਪੁੱਗੇ ਸਰਟੀਫਿਕੇਟ ਨਾਲ ਸਾਈਨ ਕੀਤਾ ਗਿਆ ਸੀ
+       *[other] ਦਸਤਾਵੇਜ਼ ਨੂੰ { $count } ਮਿਆਦ ਪੁੱਗੇ ਸਰਟੀਫਿਕੇਟਾਂ ਨਾਲ ਸਾਈਨ ਕੀਤਾ ਗਿਆ ਸੀ
+    }
+pdfjs-digital-signature-properties-banner-invalid =
+    { $count ->
+        [one] ਦਸਤਾਵੇਜ਼ ਵਿੱਚ { $count } ਅਵੈਧ ਡਿਜੀਟਲ ਦਸਤਖਤ ਹਨ
+       *[other] ਦਸਤਾਵੇਜ਼ ਵਿੱਚ { $count } ਅਵੈਧ ਡਿਜੀਟਲ ਦਸਤਖਤ ਹਨ
+    }
+pdfjs-digital-signature-properties-banner-revoked =
+    { $count ->
+        [one] ਦਸਤਾਵੇਜ਼ 'ਤੇ { $count } ਰੱਦ ਕੀਤੇ ਸਰਟੀਫਿਕੇਟ ਨਾਲ ਦਸਤਖਤ ਕੀਤੇ ਗਏ ਹਨ
+       *[other] ਦਸਤਾਵੇਜ਼ { $count } ਰੱਦ ਕੀਤੇ ਸਰਟੀਫਿਕੇਟਾਂ ਨਾਲ ਦਸਤਖਤ ਕੀਤਾ ਗਿਆ ਹੈ
+    }
+
+## Per-signature status row. Only three distinct strings are needed:
+## the signature crypto either verified (the cert chain may still be
+## untrusted/expired/revoked, but that's surfaced on the cert row
+## below), or it failed, or its sub-format isn't supported.
+
+pdfjs-digital-signature-properties-status-verified = ਸਥਿਤੀ: ਦਸਤਖਤਾਂ ਦੀ ਜਾਂਚ ਕੀਤੀ ਗਈ
+pdfjs-digital-signature-properties-status-invalid = ਸਥਿਤੀ: ਦਸਤਖਤ ਸਹੀ ਨਹੀਂ ਹਨ
+pdfjs-digital-signature-properties-status-unknown = ਸਥਿਤੀ: ਜਾਂਚ ਕਰਨ ਲਈ ਅਸਮਰੱਥ (ਗ਼ੈਰ-ਸਹਾਇਕ)
+
+## Per-signature certificate row. The variants with an issuer / date in
+## parentheses embed fully-localized context — no English fall-through.
+##
+## Variables:
+##   $issuer (String) - issuer or subject common name from the cert.
+##   $dateObj (Date)  - notAfter date for the expired-with-date form.
+
+pdfjs-digital-signature-properties-certificate-trusted = ਸਰਟੀਫਿਕੇਟ: ਭਰੋਸਾਕਰਤਾ ({ $issuer })
+pdfjs-digital-signature-properties-certificate-unknown = ਸਰਟੀਫਿਕੇਟ: ਗ਼ੈਰ-ਮੌਜੂਦ
+pdfjs-digital-signature-properties-certificate-untrusted = ਸਰਟੀਫਿਕੇਟ: ਬੇਭਰੋਸੇਯੋਗ
+pdfjs-digital-signature-properties-certificate-untrusted-unknown-issuer = ਸਰਟੀਫਿਕੇਟ: ਅਣਪਛਾਤਾ ਜਾਰੀਕਰਤਾ ({ $issuer })
+pdfjs-digital-signature-properties-certificate-untrusted-self-signed = ਸਰਟੀਫਿਕੇਟ: ਸਵੈ-ਦਸਤਖ਼ਤੀ ({ $issuer })
+pdfjs-digital-signature-properties-certificate-untrusted-untrusted-issuer = ਸਰਟੀਫਿਕੇਟ: ਬੇਭਰੋਸੇਯੋਗ ਜਾਰੀ ਕਰਤਾ ({ $issuer })
+pdfjs-digital-signature-properties-certificate-expired = ਸਰਟੀਫਿਕੇਟ: ਮਿਆਦ ਪੁੱਗੀ
+pdfjs-digital-signature-properties-certificate-expired-with-date = ਸਰਟੀਫਿਕੇਟ: ਮਿਆਦ ਪੁੱਗੀ ({ DATETIME($dateObj, dateStyle: "medium") })
+pdfjs-digital-signature-properties-certificate-revoked = ਸਰਟੀਫਿਕੇਟ: ਰੱਦ ਕੀਤਾ
 
 ## Main menu for adding/removing signatures
 

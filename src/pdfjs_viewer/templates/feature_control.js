@@ -4,6 +4,62 @@
 (function() {
     'use strict';
 
+    // ---------------------------------------------------------------
+    // Stylesheet injection
+    //
+    // PDF.js >= 6.x ships a Content-Security-Policy in viewer.html with
+    // `style-src 'self'` (no 'unsafe-inline'). That blocks the classic
+    // `<style>` element + textContent approach: Chromium refuses to apply
+    // the sheet and the rules silently never take effect.
+    //
+    // Constructable stylesheets (new CSSStyleSheet() + adoptedStyleSheets)
+    // go through the CSSOM rather than inline style, so CSP does not apply.
+    // ---------------------------------------------------------------
+    const injectedSheets = new Map();
+
+    function injectCSS(id, cssText) {
+        try {
+            let sheet = injectedSheets.get(id);
+            if (!sheet) {
+                sheet = new CSSStyleSheet();
+                injectedSheets.set(id, sheet);
+                document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+            }
+            sheet.replaceSync(cssText);
+            return true;
+        } catch (e) {
+            // Fallback for engines without constructable stylesheet support.
+            // CSP blocks this on PDF.js >= 6.x, but it is harmless where it does not.
+            try {
+                let style = document.getElementById(id);
+                if (!style) {
+                    style = document.createElement('style');
+                    style.id = id;
+                    document.head.appendChild(style);
+                }
+                style.textContent = cssText;
+                return true;
+            } catch (e2) {
+                console.error('Failed to inject stylesheet ' + id + ':', e2);
+                return false;
+            }
+        }
+    }
+
+    function removeCSS(id) {
+        const sheet = injectedSheets.get(id);
+        if (sheet) {
+            document.adoptedStyleSheets =
+                document.adoptedStyleSheets.filter(s => s !== sheet);
+            injectedSheets.delete(id);
+        }
+        const style = document.getElementById(id);
+        if (style) {
+            style.remove();
+        }
+    }
+
+
     // UI element mappings
     const FEATURE_ELEMENTS = {
         print: ['printButton', 'secondaryPrint'],
@@ -25,9 +81,7 @@
     function disableStampAltText() {
 
         // Use CSS to hide alt-text buttons while keeping delete buttons visible
-        const style = document.createElement('style');
-        style.id = 'pdfjs-disable-alttext-style';
-        style.textContent = `
+        injectCSS('pdfjs-disable-alttext-style', `
             /* Hide alt-text button for stamp annotations */
             .stampEditor button[data-l10n-id="pdfjs-editor-alt-text-button-label"],
             .stampEditor button[aria-label="Alt text"],
@@ -61,8 +115,7 @@
             button[data-l10n-id="pdfjs-editor-new-alt-text-to-review-button-label"] {
                 display: none !important;
             }
-        `;
-        document.head.appendChild(style);
+        `);
 
         // Also prevent alt-text dialog from opening
         if (window.PDFViewerApplication && window.PDFViewerApplication.externalServices) {
@@ -125,28 +178,21 @@
         // Force presentation mode to be visible if enabled
         // PDF.js may hide it automatically when fullscreen API is not available in WebEngine
         if (config.presentation !== false) {
-            const style = document.createElement('style');
-            style.id = 'pdfjs-force-presentation-style';
-            style.textContent = `
+            // PDF.js hides this button with the `.hidden` class when the
+            // Fullscreen API is unavailable, and `.hidden` is
+            // `display: none !important`, so the override needs !important too.
+            // `flex` is the natural .toolbarButton display value.
+            injectCSS('pdfjs-force-presentation-style', `
                 /* Force presentation mode button to be visible */
                 #presentationMode,
                 #secondaryPresentationMode {
-                    display: inline-block !important;
+                    display: flex !important;
                     visibility: visible !important;
                 }
-            `;
-            // Remove existing style if present (for dynamic updates)
-            const existingStyle = document.getElementById('pdfjs-force-presentation-style');
-            if (existingStyle) {
-                existingStyle.remove();
-            }
-            document.head.appendChild(style);
+            `);
         } else {
             // Remove the style if presentation mode is disabled
-            const existingStyle = document.getElementById('pdfjs-force-presentation-style');
-            if (existingStyle) {
-                existingStyle.remove();
-            }
+            removeCSS('pdfjs-force-presentation-style');
         }
 
         // Handle stamp alt-text disabling

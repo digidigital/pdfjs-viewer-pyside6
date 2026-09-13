@@ -56,6 +56,9 @@ TRANSLATIONS = {
         'print_process_failed': 'Print process failed to start',
         'print_sending': 'Sending data to printer...',
         'rendering_page': 'Rendering page {current} of {total}...',
+        'custom_pages': 'Pages:',
+        'custom_pages_placeholder': 'e.g. 1-3, 5, 8-10',
+        'invalid_page_selection': 'No valid pages selected. Please check your input (e.g. 1-3, 5, 8-10).',
     },
     'de': {  # German
         'dialog_title': 'Drucken',
@@ -105,6 +108,9 @@ TRANSLATIONS = {
         'print_process_failed': 'Druckprozess konnte nicht gestartet werden',
         'print_sending': 'Sende Daten an Drucker...',
         'rendering_page': 'Rendere Seite {current} von {total}...',
+        'custom_pages': 'Seiten:',
+        'custom_pages_placeholder': 'z. B. 1-3, 5, 8-10',
+        'invalid_page_selection': 'Keine gültigen Seiten ausgewählt. Bitte überprüfen Sie Ihre Eingabe (z. B. 1-3, 5, 8-10).',
     },
     'fr': {  # French
         'dialog_title': 'Imprimer',
@@ -154,6 +160,9 @@ TRANSLATIONS = {
         'print_process_failed': 'Le processus d\'impression n\'a pas pu démarrer',
         'print_sending': 'Envoi des données à l\'imprimante...',
         'rendering_page': 'Rendu de la page {current} sur {total}...',
+        'custom_pages': 'Pages :',
+        'custom_pages_placeholder': 'ex. 1-3, 5, 8-10',
+        'invalid_page_selection': 'Aucune page valide sélectionnée. Vérifiez votre saisie (ex. 1-3, 5, 8-10).',
     },
     'es': {  # Spanish
         'dialog_title': 'Imprimir',
@@ -203,6 +212,9 @@ TRANSLATIONS = {
         'print_process_failed': 'El proceso de impresión no pudo iniciarse',
         'print_sending': 'Enviando datos a la impresora...',
         'rendering_page': 'Renderizando página {current} de {total}...',
+        'custom_pages': 'Páginas:',
+        'custom_pages_placeholder': 'ej. 1-3, 5, 8-10',
+        'invalid_page_selection': 'No hay páginas válidas seleccionadas. Compruebe su entrada (ej. 1-3, 5, 8-10).',
     },
     'it': {  # Italian
         'dialog_title': 'Stampa',
@@ -252,6 +264,9 @@ TRANSLATIONS = {
         'print_process_failed': 'Il processo di stampa non è riuscito ad avviarsi',
         'print_sending': 'Invio dati alla stampante...',
         'rendering_page': 'Rendering pagina {current} di {total}...',
+        'custom_pages': 'Pagine:',
+        'custom_pages_placeholder': 'es. 1-3, 5, 8-10',
+        'invalid_page_selection': "Nessuna pagina valida selezionata. Controlla l'input (es. 1-3, 5, 8-10).",
     },
     'pt': {  # Portuguese
         'dialog_title': 'Imprimir',
@@ -301,6 +316,9 @@ TRANSLATIONS = {
         'print_process_failed': 'O processo de impressão falhou ao iniciar',
         'print_sending': 'Enviando dados para a impressora...',
         'rendering_page': 'Renderizando página {current} de {total}...',
+        'custom_pages': 'Páginas:',
+        'custom_pages_placeholder': 'ex. 1-3, 5, 8-10',
+        'invalid_page_selection': 'Nenhuma página válida selecionada. Verifique a sua entrada (ex. 1-3, 5, 8-10).',
     },
     'nl': {  # Dutch
         'dialog_title': 'Afdrukken',
@@ -350,6 +368,9 @@ TRANSLATIONS = {
         'print_process_failed': 'Het afdrukproces kon niet worden gestart',
         'print_sending': 'Gegevens verzenden naar printer...',
         'rendering_page': 'Pagina {current} van {total} renderen...',
+        'custom_pages': "Pagina's:",
+        'custom_pages_placeholder': 'bijv. 1-3, 5, 8-10',
+        'invalid_page_selection': "Geen geldige pagina's geselecteerd. Controleer uw invoer (bijv. 1-3, 5, 8-10).",
     },
     'pl': {  # Polish
         'dialog_title': 'Drukuj',
@@ -399,6 +420,9 @@ TRANSLATIONS = {
         'print_process_failed': 'Proces drukowania nie mógł się rozpocząć',
         'print_sending': 'Wysyłanie danych do drukarki...',
         'rendering_page': 'Renderowanie strony {current} z {total}...',
+        'custom_pages': 'Strony:',
+        'custom_pages_placeholder': 'np. 1-3, 5, 8-10',
+        'invalid_page_selection': 'Nie wybrano żadnych prawidłowych stron. Sprawdź swoje dane (np. 1-3, 5, 8-10).',
     },
     'cs': {  # Czech
         'dialog_title': 'Tisk',
@@ -435,6 +459,9 @@ TRANSLATIONS = {
         'save_to_label': 'Uložit do:',
         'specify_output_path': 'Prosím zadejte cestu k výstupnímu souboru.',
         'rendering_page': 'Renderování stránky {current} z {total}...',
+        'custom_pages': 'Stránky:',
+        'custom_pages_placeholder': 'např. 1-3, 5, 8-10',
+        'invalid_page_selection': 'Nebyly vybrány žádné platné stránky. Zkontrolujte zadání (např. 1-3, 5, 8-10).',
     },
     'sv': {  # Swedish
         'dialog_title': 'Skriv ut',
@@ -471,6 +498,9 @@ TRANSLATIONS = {
         'save_to_label': 'Spara till:',
         'specify_output_path': 'Vänligen ange en utdatafilsökväg.',
         'rendering_page': 'Renderar sida {current} av {total}...',
+        'custom_pages': 'Sidor:',
+        'custom_pages_placeholder': 't.ex. 1-3, 5, 8-10',
+        'invalid_page_selection': 'Inga giltiga sidor valda. Kontrollera din inmatning (t.ex. 1-3, 5, 8-10).',
     },
     'da': {  # Danish
         'dialog_title': 'Udskriv',
@@ -507,6 +537,9 @@ TRANSLATIONS = {
         'save_to_label': 'Gem til:',
         'specify_output_path': 'Angiv venligst en outputfilsti.',
         'rendering_page': 'Renderer side {current} af {total}...',
+        'custom_pages': 'Sider:',
+        'custom_pages_placeholder': 'f.eks. 1-3, 5, 8-10',
+        'invalid_page_selection': 'Ingen gyldige sider valgt. Kontroller din indtastning (f.eks. 1-3, 5, 8-10).',
     },
     'no': {  # Norwegian
         'dialog_title': 'Skriv ut',
@@ -543,6 +576,9 @@ TRANSLATIONS = {
         'save_to_label': 'Lagre til:',
         'specify_output_path': 'Vennligst oppgi en utdatafilbane.',
         'rendering_page': 'Gjengir side {current} av {total}...',
+        'custom_pages': 'Sider:',
+        'custom_pages_placeholder': 'f.eks. 1-3, 5, 8-10',
+        'invalid_page_selection': 'Ingen gyldige sider valgt. Kontroller inndataene dine (f.eks. 1-3, 5, 8-10).',
     },
     'fi': {  # Finnish
         'dialog_title': 'Tulosta',
@@ -579,6 +615,9 @@ TRANSLATIONS = {
         'save_to_label': 'Tallenna kohteeseen:',
         'specify_output_path': 'Anna tulostustiedoston polku.',
         'rendering_page': 'Renderöidään sivu {current}/{total}...',
+        'custom_pages': 'Sivut:',
+        'custom_pages_placeholder': 'esim. 1-3, 5, 8-10',
+        'invalid_page_selection': 'Ei kelvollisia sivuja valittu. Tarkista syöttö (esim. 1-3, 5, 8-10).',
     },
     'el': {  # Greek
         'dialog_title': 'Εκτύπωση',
@@ -615,6 +654,9 @@ TRANSLATIONS = {
         'save_to_label': 'Αποθήκευση σε:',
         'specify_output_path': 'Παρακαλώ καθορίστε μια διαδρομή αρχείου εξόδου.',
         'rendering_page': 'Απόδοση σελίδας {current} από {total}...',
+        'custom_pages': 'Σελίδες:',
+        'custom_pages_placeholder': 'π.χ. 1-3, 5, 8-10',
+        'invalid_page_selection': 'Δεν επιλέχθηκαν έγκυρες σελίδες. Ελέγξτε την εισαγωγή σας (π.χ. 1-3, 5, 8-10).',
     },
     'uk': {  # Ukrainian
         'dialog_title': 'Друк',
@@ -651,6 +693,9 @@ TRANSLATIONS = {
         'save_to_label': 'Зберегти в:',
         'specify_output_path': 'Будь ласка, вкажіть шлях до вихідного файлу.',
         'rendering_page': 'Рендеринг сторінки {current} з {total}...',
+        'custom_pages': 'Сторінки:',
+        'custom_pages_placeholder': 'напр. 1-3, 5, 8-10',
+        'invalid_page_selection': 'Не вибрано жодної дійсної сторінки. Перевірте введення (напр. 1-3, 5, 8-10).',
     },
     'hi': {  # Hindi (Indian)
         'dialog_title': 'प्रिंट करें',
@@ -687,6 +732,9 @@ TRANSLATIONS = {
         'save_to_label': 'इसमें सहेजें:',
         'specify_output_path': 'कृपया एक आउटपुट फ़ाइल पथ निर्दिष्ट करें।',
         'rendering_page': 'पृष्ठ {current} का {total} रेंडर हो रहा है...',
+        'custom_pages': 'पृष्ठ:',
+        'custom_pages_placeholder': 'उदा. 1-3, 5, 8-10',
+        'invalid_page_selection': 'कोई मान्य पृष्ठ नहीं चुना गया। अपना इनपुट जांचें (उदा. 1-3, 5, 8-10)।',
     },
     'ro': {  # Romanian
         'dialog_title': 'Imprimare',
@@ -723,6 +771,9 @@ TRANSLATIONS = {
         'save_to_label': 'Salvare în:',
         'specify_output_path': 'Vă rugăm să specificați o cale a fișierului de ieșire.',
         'rendering_page': 'Randare pagină {current} din {total}...',
+        'custom_pages': 'Pagini:',
+        'custom_pages_placeholder': 'ex. 1-3, 5, 8-10',
+        'invalid_page_selection': 'Nu au fost selectate pagini valide. Verificați datele introduse (ex. 1-3, 5, 8-10).',
     },
     'hu': {  # Hungarian
         'dialog_title': 'Nyomtatás',
@@ -759,6 +810,9 @@ TRANSLATIONS = {
         'save_to_label': 'Mentés ide:',
         'specify_output_path': 'Kérjük, adjon meg egy kimeneti fájl elérési utat.',
         'rendering_page': 'Renderelés: {current}. oldal / {total}...',
+        'custom_pages': 'Oldalak:',
+        'custom_pages_placeholder': 'pl. 1-3, 5, 8-10',
+        'invalid_page_selection': 'Nem lettek érvényes oldalak kijelölve. Ellenőrizze a bevitelt (pl. 1-3, 5, 8-10).',
     },
     'bg': {  # Bulgarian
         'dialog_title': 'Печат',
@@ -795,6 +849,9 @@ TRANSLATIONS = {
         'save_to_label': 'Запазване в:',
         'specify_output_path': 'Моля, посочете път на изходен файл.',
         'rendering_page': 'Рендериране на страница {current} от {total}...',
+        'custom_pages': 'Страници:',
+        'custom_pages_placeholder': 'напр. 1-3, 5, 8-10',
+        'invalid_page_selection': 'Не са избрани валидни страници. Проверете въведените данни (напр. 1-3, 5, 8-10).',
     },
     'hr': {  # Croatian
         'dialog_title': 'Ispis',
@@ -831,6 +888,9 @@ TRANSLATIONS = {
         'save_to_label': 'Spremi u:',
         'specify_output_path': 'Molimo navedite putanju izlazne datoteke.',
         'rendering_page': 'Renderiranje stranice {current} od {total}...',
+        'custom_pages': 'Stranice:',
+        'custom_pages_placeholder': 'npr. 1-3, 5, 8-10',
+        'invalid_page_selection': 'Nisu odabrane valjane stranice. Provjerite unos (npr. 1-3, 5, 8-10).',
     },
 }
 

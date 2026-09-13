@@ -134,10 +134,10 @@ def perform_print_job_with_dialog(
         if settings['print_to_pdf']:
             # Export to PDF file - quick, no progress needed
             output_path = settings['output_path']
-            from_page, to_page = settings['page_range']
+            pages = settings['pages']
 
             try:
-                success = export_pdf_pages(pdf_data, output_path, from_page, to_page)
+                success = export_pdf_pages(pdf_data, output_path, pages)
                 if not cancelled['value']:
                     close_dialog_with_min_time(success)
                 if success:
@@ -173,9 +173,9 @@ def perform_print_job_with_dialog(
             printer = QPrinter(printer_info, QPrinter.PrinterMode.HighResolution)
             printer.setCopyCount(settings['num_copies'])
 
-            # Get page range
-            from_page, to_page = settings['page_range']
-            total_pages_to_print = to_page - from_page + 1
+            # Get pages to print
+            pages = settings['pages']
+            total_pages_to_print = len(pages)
 
             # Import pypdfium2 for rendering
             try:
@@ -208,7 +208,7 @@ def perform_print_job_with_dialog(
                 is_first_page = True
 
                 # Sequential loop: render -> print -> release for each page
-                for i, page_idx in enumerate(range(from_page - 1, to_page)):
+                for i, page_idx in enumerate(p - 1 for p in pages):
                     if cancelled['value']:
                         break
 
@@ -346,7 +346,7 @@ def show_print_dialog(total_pages: int) -> Optional[dict]:
             'accepted': True,
             'print_to_pdf': dialog.print_to_pdf_file,
             'printer_name': dialog.selected_printer,
-            'page_range': dialog.page_range,
+            'pages': dialog.selected_pages,
             'num_copies': dialog.num_copies,
             'output_path': dialog.output_path,
             'printer_available': printer_info is not None if not dialog.print_to_pdf_file else True

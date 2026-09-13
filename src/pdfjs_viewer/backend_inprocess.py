@@ -184,6 +184,11 @@ class InProcessBackend(ViewerBackend):
         settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, False)
         settings.setAttribute(QWebEngineSettings.WebAttribute.AutoLoadIconsForPage, False)
 
+        # PDF.js gates its presentation-mode button - and the PDFPresentationMode
+        # instance behind it - on document.fullscreenEnabled, which QtWebEngine
+        # reports as false unless fullscreen support is enabled explicitly.
+        settings.setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
+
         # Create web view
         self.web_view = CustomWebEngineView(
             disable_context_menu=self.config.disable_context_menu,
@@ -193,6 +198,32 @@ class InProcessBackend(ViewerBackend):
 
         # Connect to crash detection for automatic recovery
         secure_page.renderProcessTerminated.connect(self._on_render_process_terminated)
+
+        # Fullscreen requests must be accepted explicitly, otherwise Qt denies
+        # them and PDF.js presentation mode stalls (see _on_fullscreen_requested).
+        secure_page.fullScreenRequested.connect(self._on_fullscreen_requested)
+
+    def _on_fullscreen_requested(self, request):
+        """Accept fullscreen requests issued by PDF.js presentation mode.
+
+        Qt denies fullscreen unless the request is accepted explicitly, which
+        leaves PDF.js stuck in presentationModeState CHANGING with the viewer
+        unusable. Accepting both the enter (toggleOn=True) and exit
+        (toggleOn=False) requests makes presentation mode work within the
+        widget's bounds.
+
+        A host application that wants presentation mode to fill the entire
+        screen can connect its own slot to the page's fullScreenRequested
+        signal in addition to this one.
+
+        Args:
+            request: QWebEngineFullScreenRequest to accept.
+        """
+        try:
+            request.accept()
+        except RuntimeError:
+            # Page or request already destroyed during shutdown
+            pass
 
     def _setup_bridge(self):
         """Setup QWebChannel bridge for JavaScript-Python communication."""
@@ -220,9 +251,20 @@ class InProcessBackend(ViewerBackend):
         self.web_view.page().setWebChannel(self.channel)
 
     def _load_viewer(self):
-        """Load the PDF.js viewer HTML."""
+        """Load the PDF.js viewer HTML with no document open.
+
+        The empty ``file`` query parameter is required. Without it PDF.js falls
+        back to its ``defaultUrl`` option, which points at the demo PDF shipped
+        inside the PDF.js distribution - so the viewer would either open that
+        sample document on startup, or report a missing-file error once the demo
+        PDF is excluded from the package. show_blank_page() does the same thing.
+        """
         viewer_url = self.resource_manager.get_viewer_url()
-        self.web_view.setUrl(viewer_url)
+        query = QUrlQuery()
+        query.addQueryItem('file', '')
+        viewer_qurl = QUrl(viewer_url)
+        viewer_qurl.setQuery(query)
+        self.web_view.setUrl(viewer_qurl)
 
         # Inject scripts after page loads
         self.web_view.loadFinished.connect(self._on_page_loaded)

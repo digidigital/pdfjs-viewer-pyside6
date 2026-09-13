@@ -153,6 +153,7 @@ pdfjs-document-properties-linearized = Vista rápida de la web:
 pdfjs-document-properties-linearized-yes = Sí
 pdfjs-document-properties-linearized-no = No
 pdfjs-document-properties-close-button = Cerrar
+pdfjs-digital-signature-properties-view-certificate = Ver certificado
 
 ## Print
 
@@ -161,8 +162,8 @@ pdfjs-print-progress-message = Preparando documento para impresión…
 #   $progress (Number) - percent value
 pdfjs-print-progress-percent = { $progress }%
 pdfjs-print-progress-close-button = Cancelar
-pdfjs-printing-not-supported = Advertencia: La impresión no esta completamente soportada por este navegador.
-pdfjs-printing-not-ready = Advertencia: El PDF no cargo completamente para impresión.
+pdfjs-printing-not-supported = Advertencia: La impresión no está completamente soportada por este navegador.
+pdfjs-printing-not-ready = Advertencia: El PDF no cargó completamente para impresión.
 
 ## Tooltips and alt text for side panel toolbar buttons
 
@@ -205,10 +206,6 @@ pdfjs-thumb-page-canvas =
 #   $page (Number) - the page number
 pdfjs-thumb-page-checkbox1 =
     .title = Seleccionar página { $page }
-# Variables:
-#   $page (Number) - the page number
-pdfjs-thumb-page-checkbox =
-    .aria-label = Seleccionar página { $page }
 # Variables:
 #   $page (Number) - the page number
 #   $total (Number) - the number of pages
@@ -269,7 +266,7 @@ pdfjs-page-landmark =
 ## Loading indicator messages
 
 pdfjs-loading-error = Un error ocurrió al cargar el PDF.
-pdfjs-invalid-file-error = Archivo PDF invalido o dañado.
+pdfjs-invalid-file-error = Archivo PDF inválido o dañado.
 pdfjs-missing-file-error = Archivo PDF no encontrado.
 pdfjs-unexpected-response-error = Respuesta inesperada del servidor.
 pdfjs-rendering-error = Un error ocurrió al renderizar la página.
@@ -364,7 +361,7 @@ pdfjs-editor-remove-signature-button =
 pdfjs-editor-free-text-color-input = Color
 pdfjs-editor-free-text-size-input = Tamaño
 pdfjs-editor-ink-color-input = Color
-pdfjs-editor-ink-thickness-input = Grossor
+pdfjs-editor-ink-thickness-input = Grosor
 pdfjs-editor-ink-opacity-input = Opacidad
 pdfjs-editor-stamp-add-image-button =
     .title = Agregar imagen
@@ -584,7 +581,7 @@ pdfjs-editor-add-signature-type-input =
     .aria-label = Escribe tu firma
     .placeholder = Escribe tu firma
 pdfjs-editor-add-signature-draw-placeholder = Dibuja tu firma
-pdfjs-editor-add-signature-draw-thickness-range-label = Grossor
+pdfjs-editor-add-signature-draw-thickness-range-label = Grosor
 # Variables:
 #   $thickness (Number) - the thickness (in pixels) of the line used to draw a signature.
 pdfjs-editor-add-signature-draw-thickness-range =
@@ -654,21 +651,22 @@ pdfjs-editor-add-comment-button =
 ##  - layers.
 ## The thumbnails view is used to edit the pdf: remove/insert pages, ...
 
-pdfjs-toggle-views-manager-button =
-    .title = Alternar barra lateral
 pdfjs-toggle-views-manager-notification-button =
     .title = Cambiar barra lateral (índice de contenidos del documento/miniaturas/adjuntos/capas)
 pdfjs-toggle-views-manager-button1-label = Administrar páginas
-pdfjs-toggle-views-manager-button-label = Alternar barra lateral
 pdfjs-views-manager-sidebar =
     .aria-label = Barra lateral
+pdfjs-views-manager-sidebar-resizer =
+    .aria-label = Cambiar tamaño de la barra lateral
 pdfjs-views-manager-view-selector-button =
     .title = Vistas
 pdfjs-views-manager-view-selector-button-label = Vistas
 pdfjs-views-manager-pages-title = Páginas
-pdfjs-views-manager-outlines-title = Esquema del documento
+pdfjs-views-manager-outlines-title1 = Esquema del documento
+    .title = Esquema del documento (haz doble clic para expandir/contraer todos los elementos)
 pdfjs-views-manager-attachments-title = Adjuntos
-pdfjs-views-manager-layers-title = Capas
+pdfjs-views-manager-layers-title1 = Capas
+    .title = Capas (haz doble clic para restablecer todas las capas a su estado predeterminado)
 pdfjs-views-manager-pages-option-label = Páginas
 pdfjs-views-manager-outlines-option-label = Esquema del documento
 pdfjs-views-manager-attachments-option-label = Adjuntos
@@ -688,7 +686,7 @@ pdfjs-views-manager-pages-status-action-button-label = Administrar
 pdfjs-views-manager-pages-status-copy-button-label = Copiar
 pdfjs-views-manager-pages-status-cut-button-label = Cortar
 pdfjs-views-manager-pages-status-delete-button-label = Eliminar
-pdfjs-views-manager-pages-status-save-as-button-label = Guardar como…
+pdfjs-views-manager-pages-status-export-selected-button-label = Exportar seleccionado…
 # Variables:
 #   $count (Number) - the number of selected pages to be cut.
 pdfjs-views-manager-status-undo-cut-label =
@@ -700,15 +698,15 @@ pdfjs-views-manager-status-undo-cut-label =
 #   $count (Number) - the number of selected pages to be copied.
 pdfjs-views-manager-pages-status-undo-copy-label =
     { $count ->
-        [one] 1 pagina copiada
-       *[other] { $count } paginas copiadas
+        [one] 1 página copiada
+       *[other] { $count } páginas copiadas
     }
 # Variables:
 #   $count (Number) - the number of selected pages to be deleted.
 pdfjs-views-manager-pages-status-undo-delete-label =
     { $count ->
-        [one] 1 pagina eliminada
-       *[other] { $count } paginas eliminadas
+        [one] 1 página eliminada
+       *[other] { $count } páginas eliminadas
     }
 pdfjs-views-manager-pages-status-waiting-ready-label = Preparando tu archivo…
 pdfjs-views-manager-pages-status-waiting-uploading-label = Subiendo archivo…
@@ -717,10 +715,21 @@ pdfjs-views-manager-status-warning-copy-label = No se pudo pegar. Actualiza la p
 pdfjs-views-manager-status-warning-delete-label = No se pudo eliminar. Actualiza la página y vuelve a intentarlo.
 pdfjs-views-manager-status-warning-save-label = No se pudo guardar. Actualiza la página y vuelve a intentarlo.
 pdfjs-views-manager-status-undo-button-label = Deshacer
+pdfjs-views-manager-status-done-button-label = Hecho
 pdfjs-views-manager-status-close-button =
     .title = Cerrar
 pdfjs-views-manager-status-close-button-label = Cerrar
 pdfjs-views-manager-paste-button-label = Pegar
+pdfjs-views-manager-paste-button-before =
+    .title = Pegar antes de la primera página
+# Variables:
+#   $page (Number) - the page number after which the paste button is.
+pdfjs-views-manager-paste-button-after =
+    .title = Pegar después de la página { $page }
+# Badge used to promote a new feature in the UI, keep it as short as possible.
+# It's spelled uppercase for English, but it can be translated as usual.
+pdfjs-new-badge-content = NUEVO
+pdfjs-views-manager-waiting-for-file = Subiendo archivo…
 pdfjs-toggle-views-manager-button1 =
     .title = Administrar páginas
 

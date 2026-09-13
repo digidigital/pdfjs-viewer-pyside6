@@ -2,12 +2,15 @@
 
 import atexit
 import io
+import re
 import shutil
+import sys
 import tempfile
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 from PySide6.QtCore import Signal, Qt, QStandardPaths
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QRadioButton, QButtonGroup, QSpinBox, QPushButton, QGroupBox,
@@ -16,6 +19,30 @@ from PySide6.QtWidgets import (
 from PySide6.QtPrintSupport import QPrinterInfo
 
 from .print_translations import get_translation
+
+
+def parse_page_selection(text: str, total_pages: int) -> list:
+    """Parse a free-form page selection string into a sorted list of unique page numbers.
+
+    Accepted separators: comma, semicolon, space. Ranges use hyphen.
+    Examples: "1-3, 5, 8-10"  |  "1 5 10"  |  "2; 4; 5"  |  "4 12 7 40-43 9-10 1"
+    Pages outside [1, total_pages] are silently ignored.
+    """
+    cleaned = re.sub(r'[,;]+', ' ', text)
+    pages: set = set()
+    for match in re.finditer(r'(\d+)\s*-\s*(\d+)', cleaned):
+        start, end = int(match.group(1)), int(match.group(2))
+        if start > end:
+            start, end = end, start
+        for p in range(start, min(end, total_pages) + 1):
+            if p >= 1:
+                pages.add(p)
+    remainder = re.sub(r'\d+\s*-\s*\d+', ' ', cleaned)
+    for match in re.finditer(r'\d+', remainder):
+        p = int(match.group())
+        if 1 <= p <= total_pages:
+            pages.add(p)
+    return sorted(pages)
 
 
 class CustomPrintDialog(QDialog):
@@ -46,7 +73,7 @@ class CustomPrintDialog(QDialog):
         self.total_pages = total_pages
         self.selected_printer: Optional[str] = None
         self.print_to_pdf_file: bool = False
-        self.page_range: Tuple[int, int] = (1, total_pages)
+        self.selected_pages: list = list(range(1, total_pages + 1))
         self.num_copies: int = 1
         self.output_path: Optional[str] = None
         self._print_in_progress: bool = False
@@ -60,6 +87,15 @@ class CustomPrintDialog(QDialog):
         self.setWindowTitle(self.tr['dialog_title'])
         self.setModal(True)
         self.setMinimumWidth(450)
+
+        try:
+            _icons_dir = Path(__file__).parent / "icons"
+            _icon_name = "printer.ico" if sys.platform == "win32" else "printer.png"
+            _icon_path = _icons_dir / _icon_name
+            if _icon_path.exists():
+                self.setWindowIcon(QIcon(str(_icon_path)))
+        except Exception:
+            pass
 
         self._setup_ui()
 
@@ -96,34 +132,17 @@ class CustomPrintDialog(QDialog):
         self.page_button_group.addButton(self.all_pages_radio)
         page_layout.addWidget(self.all_pages_radio)
 
-        # Custom range layout
+        # Custom pages layout
         custom_range_layout = QHBoxLayout()
-        self.custom_range_radio = QRadioButton(self.tr['pages_from'])
+        self.custom_range_radio = QRadioButton(self.tr['custom_pages'])
         self.page_button_group.addButton(self.custom_range_radio)
         custom_range_layout.addWidget(self.custom_range_radio)
 
-        self.from_page_spin = QSpinBox()
-        self.from_page_spin.setMinimum(1)
-        self.from_page_spin.setMaximum(self.total_pages)
-        self.from_page_spin.setValue(1)
-        self.from_page_spin.setEnabled(False)
-        self.from_page_spin.setFixedWidth(70)  # Fixed width for ~5 digits
-        self.from_page_spin.valueChanged.connect(self._on_from_page_changed)
-        custom_range_layout.addWidget(self.from_page_spin)
+        self.pages_input = QLineEdit()
+        self.pages_input.setPlaceholderText(self.tr['custom_pages_placeholder'])
+        self.pages_input.setEnabled(False)
+        custom_range_layout.addWidget(self.pages_input)
 
-        self.to_label = QLabel(self.tr['to'])
-        custom_range_layout.addWidget(self.to_label)
-
-        self.to_page_spin = QSpinBox()
-        self.to_page_spin.setMinimum(1)
-        self.to_page_spin.setMaximum(self.total_pages)
-        self.to_page_spin.setValue(self.total_pages)
-        self.to_page_spin.setEnabled(False)
-        self.to_page_spin.setFixedWidth(70)  # Fixed width for ~5 digits
-        self.to_page_spin.valueChanged.connect(self._on_to_page_changed)
-        custom_range_layout.addWidget(self.to_page_spin)
-
-        custom_range_layout.addStretch()
         page_layout.addLayout(custom_range_layout)
 
         # Connect radio buttons
@@ -317,32 +336,27 @@ class CustomPrintDialog(QDialog):
             self.pdf_path_edit.setText(file_path)
 
     def _on_range_toggled(self, checked: bool):
-        """Handle page range radio button toggle."""
-        self.from_page_spin.setEnabled(checked)
-        self.to_page_spin.setEnabled(checked)
-
-    def _on_from_page_changed(self, value: int):
-        """Update 'To' page minimum when 'From' page changes."""
-        self.to_page_spin.setMinimum(value)
-        if self.to_page_spin.value() < value:
-            self.to_page_spin.setValue(value)
-
-    def _on_to_page_changed(self, value: int):
-        """Update 'From' page maximum when 'To' page changes."""
-        self.from_page_spin.setMaximum(value)
-        if self.from_page_spin.value() > value:
-            self.from_page_spin.setValue(value)
+        """Handle page selection radio button toggle."""
+        self.pages_input.setEnabled(checked)
+        if checked:
+            self.pages_input.setFocus()
 
     def _on_print_clicked(self):
         """Handle print button click."""
         try:
-            # Get page range
+            # Resolve page selection
             if self.all_pages_radio.isChecked():
-                self.page_range = (1, self.total_pages)
+                self.selected_pages = list(range(1, self.total_pages + 1))
             else:
-                from_page = self.from_page_spin.value()
-                to_page = self.to_page_spin.value()
-                self.page_range = (from_page, to_page)
+                parsed = parse_page_selection(self.pages_input.text(), self.total_pages)
+                if not parsed:
+                    QMessageBox.warning(
+                        self,
+                        self.tr['error_title'],
+                        self.tr['invalid_page_selection']
+                    )
+                    return
+                self.selected_pages = parsed
 
             # Get number of copies
             self.num_copies = self.copies_spin.value()
@@ -406,7 +420,7 @@ class CustomPrintDialog(QDialog):
             'accepted': True,
             'print_to_pdf': self.print_to_pdf_file,
             'printer_name': self.selected_printer,
-            'page_range': self.page_range,
+            'pages': self.selected_pages,
             'num_copies': self.num_copies,
             'output_path': self.output_path,
             'printer_available': printer_info is not None if not self.print_to_pdf_file else True
@@ -541,14 +555,13 @@ def get_temp_file_manager() -> TempFileManager:
     return _temp_file_manager
 
 
-def export_pdf_pages(pdf_data: bytes, output_path: str, from_page: int, to_page: int) -> bool:
+def export_pdf_pages(pdf_data: bytes, output_path: str, pages: list) -> bool:
     """Export specific pages from PDF to a new file using pikepdf.
 
     Args:
         pdf_data: Source PDF as bytes
         output_path: Destination file path
-        from_page: First page to export (1-indexed)
-        to_page: Last page to export (1-indexed, inclusive)
+        pages: List of 1-indexed page numbers to export (sorted, deduplicated)
 
     Returns:
         True if successful, False otherwise
@@ -571,11 +584,9 @@ def export_pdf_pages(pdf_data: bytes, output_path: str, from_page: int, to_page:
             pdf_output = pikepdf.new()
             try:
                 total_pages = len(pdf.pages)
-                from_page = max(1, min(from_page, total_pages))
-                to_page = max(from_page, min(to_page, total_pages))
-
-                for page_num in range(from_page - 1, to_page):
-                    pdf_output.pages.append(pdf.pages[page_num])
+                for page_num in pages:
+                    if 1 <= page_num <= total_pages:
+                        pdf_output.pages.append(pdf.pages[page_num - 1])
 
                 pdf_output.save(output_path)
                 return True

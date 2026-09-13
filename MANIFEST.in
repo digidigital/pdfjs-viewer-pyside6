@@ -4,6 +4,10 @@ recursive-include src/pdfjs_viewer/pdfjs *
 # Include JavaScript templates
 include src/pdfjs_viewer/templates/*.js
 
+# Include icon files
+include src/pdfjs_viewer/icons/*.ico
+include src/pdfjs_viewer/icons/*.png
+
 # Include PyInstaller hooks
 include src/pdfjs_viewer/pyinstaller_hooks/*.py
 
@@ -13,7 +17,6 @@ recursive-include src/pdfjs_viewer/print_process *.py
 # Include documentation
 include README.md
 include LICENSE
-include CHANGELOG.md
 
 # Exclude unnecessary files
 global-exclude __pycache__
